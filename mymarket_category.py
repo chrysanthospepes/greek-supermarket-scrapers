@@ -25,11 +25,17 @@ class ProductRow:
     url: str
     name: Optional[str] = None
     code: Optional[str] = None
-    price: Optional[float] = None
-    price_unit: Optional[str] = None
+
+    final_price: Optional[float] = None
+    currency: Optional[str] = None
+
+    unit_price: Optional[float] = None
+    unit_price_unit: Optional[str] = None
+
     unit_text: Optional[str] = None
     root_category: Optional[str] = None
     breadcrumbs: Optional[str] = None
+
 
 
 # -----------------------------
@@ -72,31 +78,52 @@ def extract_product_links_from_listing(html: str) -> Set[str]:
     t = HTMLParser(html)
     out: Set[str] = set()
 
-    # Find elements containing "Κωδ:" and then grab the nearest link in that product tile.
-    # We do a tolerant approach:
-    # - locate nodes with text that includes "Κωδ:"
-    # - walk up a few levels and look for the first <a href> that points to a single-slug page
-    code_nodes = t.css("*")
-
-    for node in code_nodes:
+    # Find nodes that include "Κωδ:" (product code line on tiles)
+    for node in t.css("*"):
         txt = node.text(strip=True)
         if not txt or "Κωδ:" not in txt:
             continue
 
-        # climb up to find an anchor that looks like a product link
         cur = node
-        for _ in range(6):  # up to 6 parents
-            # find any <a href> inside this container
-            a = cur.css_first("a[href]") if cur else None
-            if a:
-                href = a.attributes.get("href", "")
-                if href:
+        for _ in range(8):  # walk up ancestors
+            if cur is None:
+                break
+
+            container_text = cur.text(strip=True)
+
+            # Stop at a "small" container that likely represents ONE product tile:
+            # it should contain exactly one Κωδ:
+            if container_text.count("Κωδ:") == 1:
+                anchors = cur.css("a[href]")
+                best = None
+
+                for a in anchors:
+                    a_text = (a.text(strip=True) or "").strip()
+                    href = a.attributes.get("href", "")
+
+                    # skip banner / CTA links
+                    if "αγόρασε" in a_text.lower():
+                        continue
+
                     u = normalize(urljoin(BASE, href))
-                    if same_site(u) and looks_like_product_url(u):
-                        p = urlparse(u).path
-                        if p.count("/") == 1 and len(p) > 2:
-                            out.add(u)
-                            break
+                    if not same_site(u) or not looks_like_product_url(u):
+                        continue
+
+                    p = urlparse(u).path
+                    if p.count("/") != 1 or len(p) <= 2:
+                        continue
+
+                    # Prefer anchors that look like product title/image links:
+                    # (usually have an <img> inside or non-trivial text)
+                    has_img = a.css_first("img") is not None
+                    if has_img or len(a_text) >= 3:
+                        best = u
+                        break
+
+                if best:
+                    out.add(best)
+                break
+
             cur = cur.parent
 
     out.discard(ROOT_LISTING)
@@ -118,31 +145,98 @@ def extract_code(full_text: str) -> Optional[str]:
     m = _code_re.search(full_text)
     return m.group(2) if m else None
 
-def extract_unit_text(full_text: str) -> Optional[str]:
-    # Often appears like "~1 τεμάχιο / 100g"
-    for line in full_text.splitlines():
-        s = line.strip()
-        if s.startswith("~"):
-            return s
+def extract_unit_text_dom(t: HTMLParser) -> Optional[str]:
+    """
+    Extract unit description like: "~1 τεμάχιο / 300g"
+    from the small rounded info box on the product page.
+    """
+    # Look for a span that is bold and contains "~"
+    for bold in t.css("span.font-bold"):
+        left = (bold.text(strip=True) or "").strip()
+        if not left.startswith("~"):
+            continue
+
+        parent = bold.parent
+        if not parent:
+            continue
+
+        # Find the sibling/other span that contains the rest (unit + / grams)
+        # In your HTML it's the second <span> in the same parent.
+        spans = parent.css("span")
+        if len(spans) >= 2:
+            right = spans[1].text(separator=" ", strip=True)
+            right = re.sub(r"\s+", " ", (right or "").strip())
+            left = re.sub(r"\s+", " ", left)
+            combo = f"{left} {right}".strip()
+            return combo
+
     return None
 
-def extract_price_and_unit(full_text: str) -> tuple[Optional[float], Optional[str]]:
+
+# def extract_price_and_unit(full_text: str) -> tuple[Optional[float], Optional[str]]:
+#     """
+#     Find a line like: "2,19€ Τιμή κιλού"
+#     """
+#     for line in full_text.splitlines():
+#         s = line.strip().replace("\xa0", " ")
+#         if "€" in s and ("Τιμή" in s or "τιμή" in s):
+#             m = _price_line_re.search(s)
+#             if m:
+#                 num = m.group(1).replace(".", "").replace(",", ".")
+#                 try:
+#                     price = float(num)
+#                 except ValueError:
+#                     price = None
+#                 unit = (m.group(2) or "").strip() or None
+#                 return price, unit
+#     return None, None
+
+def extract_prices(t: HTMLParser) -> tuple[Optional[float], Optional[str], Optional[float], Optional[str]]:
     """
-    Find a line like: "2,19€ Τιμή κιλού"
+    Returns:
+      (final_price, final_price_currency, unit_price, unit_price_unit)
     """
-    for line in full_text.splitlines():
-        s = line.strip().replace("\xa0", " ")
-        if "€" in s and ("Τιμή" in s or "τιμή" in s):
-            m = _price_line_re.search(s)
-            if m:
-                num = m.group(1).replace(".", "").replace(",", ".")
-                try:
-                    price = float(num)
-                except ValueError:
-                    price = None
-                unit = (m.group(2) or "").strip() or None
-                return price, unit
-    return None, None
+    def to_float(s: str) -> Optional[float]:
+        s = (s or "").strip().replace("\xa0", " ")
+        s = s.replace("€", "").strip()
+        # greek format: 12,38
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    # Final price (selling unit) like: <span class="product-full--final-price ...">0,99€</span>
+    final_price = None
+    final_node = t.css_first(".product-full--price-per-selling-unit .product-full--final-price")
+    if final_node:
+        final_price = to_float(final_node.text(strip=True))
+
+    # Unit price block like:
+    # <div class="... text-center ...">
+    #   <span class="font-bold text-base">12,38€</span>
+    #   <span class="text-[7px] ...">Τιμή κιλού</span>
+    # </div>
+    unit_price = None
+    unit_label = None
+
+    # Find a block that contains a "Τιμή ..." label and then read the number above it
+    for label in t.css("span"):
+        label_text = label.text(strip=True)
+        if not label_text:
+            continue
+        if label_text.startswith("Τιμή "):  # "Τιμή κιλού", "Τιμή λίτρου", etc.
+            unit_label = label_text
+            parent = label.parent
+            if parent:
+                # price is typically the first bold/base span in the same parent
+                price_span = parent.css_first("span.font-bold")
+                if price_span:
+                    unit_price = to_float(price_span.text(strip=True))
+            break
+
+    return final_price, "EUR", unit_price, unit_label
+
 
 def extract_breadcrumbs(t: HTMLParser) -> tuple[Optional[str], Optional[str]]:
     """
@@ -191,16 +285,20 @@ def parse_product_page(html: str, url: str) -> ProductRow:
 
     name = extract_name(t)
     code = extract_code(full_text)
-    unit_text = extract_unit_text(full_text)
-    price, price_unit = extract_price_and_unit(full_text)
+    unit_text = extract_unit_text_dom(t)
+
+    final_price, currency, unit_price, unit_label = extract_prices(t)
+
     root_cat, breadcrumbs = extract_breadcrumbs(t)
 
     return ProductRow(
         url=url,
         name=name,
         code=code,
-        price=price,
-        price_unit=price_unit,
+        final_price=final_price,
+        currency=currency,
+        unit_price=unit_price,
+        unit_price_unit=unit_label,
         unit_text=unit_text,
         root_category=root_cat,
         breadcrumbs=breadcrumbs,
@@ -238,6 +336,7 @@ def crawl_frouta_lachanika(max_pages: int = 500) -> List[str]:
             time.sleep(0.5)
 
     return sorted(product_urls)
+    return product_urls
 
 
 def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λαχανικά") -> List[ProductRow]:
@@ -250,6 +349,9 @@ def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λα
                 if r.status_code != 200:
                     continue
                 row = parse_product_page(r.text, u)
+                
+                if not row.name or not row.code:
+                    continue
 
                 # Keep only those really under the expected root category
                 if row.root_category == expected_root:
