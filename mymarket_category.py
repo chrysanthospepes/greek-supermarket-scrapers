@@ -32,7 +32,7 @@ PAGE_SLEEP_SECONDS = 0.3
 PRODUCT_SLEEP_SECONDS = 0
 PRODUCT_FETCH_CONCURRENCY = 20
 # True: deterministic sort before CSV write. False: keep parser discovery order.
-SORT_PRODUCTS_FOR_CSV = False
+SORT_PRODUCTS_FOR_CSV = True
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -333,7 +333,10 @@ def extract_prices(t: HTMLParser):
 
         low_label = label.lower()
         is_set = "σετ" in low_label
-        is_unit = any(k in low_label for k in ["κιλ", "λίτρ", "lt", "kg", "ml", "gr", "γρ"])
+        is_unit = any(
+            k in low_label
+            for k in ["κιλ", "λίτρ", "lt", "kg", "ml", "gr", "γρ", "τεμαχ", "τεμ", "τμχ"]
+        )
 
         if is_set:
             if is_old:
@@ -350,8 +353,16 @@ def extract_prices(t: HTMLParser):
                     unit_price = price_val
                     unit_price_unit = label
         else:
-            # if it's neither clearly unit nor set, ignore (or log it)
-            pass
+            # Fallback for selling-unit prices rendered as plain
+            # "Αρχική τιμή" / "Τελική τιμή" tag boxes.
+            is_initial_label = low_label.startswith("αρχική")
+            is_final_label = low_label.startswith("τελική")
+            if is_old or is_initial_label:
+                if original_price is None or is_initial_label:
+                    original_price = price_val
+            else:
+                if final_price is None or is_final_label:
+                    final_price = price_val
 
     # discount percent (your existing logic)
     discount_percent = None
