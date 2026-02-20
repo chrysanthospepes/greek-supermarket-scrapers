@@ -9,7 +9,12 @@ import httpx
 from selectolax.parser import HTMLParser
 
 BASE = "https://www.mymarket.gr"
-ROOT_LISTING = f"{BASE}/frouta-lachanika"
+ROOT_CATEGORIES = [
+    # "frouta-lachanika",
+    # "fresko-kreas-psari",
+    "trofima",
+]
+MAX_PAGES_PER_CATEGORY = 500
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -42,6 +47,7 @@ class ProductRow:
     discount_percent: Optional[int] = None
 
     unit_text: Optional[str] = None
+    root_category_slug: Optional[str] = None
     root_category: Optional[str] = None
     breadcrumbs: Optional[str] = None
 
@@ -57,6 +63,29 @@ def same_site(u: str) -> bool:
 def normalize(u: str) -> str:
     p = urlparse(u)
     return p._replace(fragment="").geturl()
+
+def to_category_slug(category: str) -> str:
+    parsed = urlparse(category)
+    if parsed.scheme and parsed.netloc:
+        slug = parsed.path.strip("/")
+    else:
+        slug = category.strip("/")
+
+    if not slug:
+        raise ValueError(f"Invalid category '{category}'")
+
+    return slug
+
+def to_category_url(category: str) -> str:
+    slug = to_category_slug(category)
+    return f"{BASE}/{slug}"
+
+def csv_filename_for_category(category: str) -> str:
+    slug = to_category_slug(category).replace("/", "_")
+    safe_slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", slug).strip("_")
+    if not safe_slug:
+        safe_slug = "category"
+    return f"{safe_slug}_products.csv"
 
 def looks_like_product_url(u: str) -> bool:
     """
@@ -83,7 +112,7 @@ def listing_has_products(html: str) -> bool:
 # Parsing: category listing pages
 # -----------------------------
 
-def extract_product_links_from_listing(html: str) -> Set[str]:
+def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]:
     t = HTMLParser(html)
     out: Set[str] = set()
 
@@ -135,7 +164,7 @@ def extract_product_links_from_listing(html: str) -> Set[str]:
 
             cur = cur.parent
 
-    out.discard(ROOT_LISTING)
+    out.discard(normalize(root_listing))
     return out
 
 
@@ -287,36 +316,50 @@ def extract_prices(t: HTMLParser):
 
 def extract_breadcrumbs_dom(t: HTMLParser):
     """
-    Find the breadcrumb <ol> by locating an <a> that links to /frouta-lachanika,
-    then walk up to its ancestor <ol>. Works even if classes change.
+    Return (root_category_slug, root_category_name, breadcrumbs_text).
+    Works across all category roots by reading breadcrumb href paths.
     """
-    a = t.css_first('ol a[href*="/frouta-lachanika"]')
-    if not a:
-        # fallback: any ol with several breadcrumb-like links near top
-        for ol in t.css("ol"):
-            links = [x.text(strip=True) for x in ol.css("a[href]") if x.text(strip=True)]
-            if 2 <= len(links) <= 10:
-                return links[0], " > ".join(links)
-        return None, None
+    candidates: List[List[tuple[str, str]]] = []
 
-    # walk up to the <ol>
-    cur = a
-    while cur and cur.tag != "ol":
-        cur = cur.parent
+    for ol in t.css("ol"):
+        links: List[tuple[str, str]] = []
+        for link in ol.css("a[href]"):
+            txt = (link.text(strip=True) or "").strip()
+            href = (link.attributes.get("href") or "").strip()
+            if not txt or not href:
+                continue
 
-    if not cur:
-        return None, None
+            u = normalize(urljoin(BASE, href))
+            if not same_site(u):
+                continue
 
-    links = []
-    for link in cur.css("a[href]"):
-        txt = (link.text(strip=True) or "").strip()
-        if txt:
-            links.append(txt)
+            path = urlparse(u).path.strip("/")
+            if not path:
+                continue
 
-    if not links:
-        return None, None
+            links.append((path, txt))
 
-    return links[0], " > ".join(links)
+        if 1 <= len(links) <= 12:
+            candidates.append(links)
+
+    if not candidates:
+        return None, None, None
+
+    breadcrumb_links = max(candidates, key=len)
+
+    root_slug = None
+    root_name = None
+    for path, txt in breadcrumb_links:
+        if path.count("/") == 0:
+            root_slug = path
+            root_name = txt
+            break
+
+    if root_slug is None:
+        root_slug, root_name = breadcrumb_links[0]
+
+    breadcrumb_text = " > ".join(txt for _, txt in breadcrumb_links)
+    return root_slug, root_name, breadcrumb_text
 
 def parse_product_page(html: str, url: str) -> ProductRow:
     t = HTMLParser(html)
@@ -334,7 +377,7 @@ def parse_product_page(html: str, url: str) -> ProductRow:
         discount_percent
     ) = extract_prices(t)
 
-    root_cat, breadcrumbs = extract_breadcrumbs_dom(t)
+    root_slug, root_cat, breadcrumbs = extract_breadcrumbs_dom(t)
 
     return ProductRow(
         url=url,
@@ -349,6 +392,7 @@ def parse_product_page(html: str, url: str) -> ProductRow:
         original_unit_price_unit=original_unit_label,
         discount_percent=discount_percent,
         unit_text=unit_text,
+        root_category_slug=root_slug,
         root_category=root_cat,
         breadcrumbs=breadcrumbs,
     )
@@ -357,12 +401,13 @@ def parse_product_page(html: str, url: str) -> ProductRow:
 # Crawl + verify + save
 # -----------------------------
 
-def crawl_frouta_lachanika(max_pages: int = 500) -> List[str]:
+def crawl_category(root_listing: str, max_pages: int = 500) -> List[str]:
+    root_listing = normalize(root_listing.rstrip("/"))
     product_urls: Set[str] = set()
 
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as c:
         for page in range(1, max_pages + 1):
-            url = ROOT_LISTING if page == 1 else f"{ROOT_LISTING}?page={page}"
+            url = root_listing if page == 1 else f"{root_listing}?page={page}"
             r = c.get(url)
 
             if r.status_code == 404:
@@ -372,7 +417,7 @@ def crawl_frouta_lachanika(max_pages: int = 500) -> List[str]:
             r.raise_for_status()
             html = r.text
 
-            new_links = extract_product_links_from_listing(html)
+            new_links = extract_product_links_from_listing(html, root_listing=root_listing)
             if not new_links:
                 print(f"page={page} -> 0 products, stopping.")
                 break
@@ -384,10 +429,9 @@ def crawl_frouta_lachanika(max_pages: int = 500) -> List[str]:
             time.sleep(0.5)
 
     return sorted(product_urls)
-    return product_urls
 
 
-def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λαχανικά") -> List[ProductRow]:
+def scrape_and_filter(urls: List[str], expected_root_slug: Optional[str] = None) -> List[ProductRow]:
     rows: List[ProductRow] = []
 
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as c:
@@ -401,9 +445,10 @@ def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λα
                 if not row.name or not row.code:
                     continue
 
-                # Keep only those really under the expected root category
-                if row.root_category == expected_root:
-                    rows.append(row)
+                # Keep only those really under the expected root category slug.
+                if expected_root_slug and row.root_category_slug != expected_root_slug:
+                    continue
+                rows.append(row)
 
                 if i % 50 == 0:
                     print(f"scraped {i}/{len(urls)} -> kept {len(rows)}")
@@ -414,7 +459,7 @@ def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λα
 
     return rows
 
-def save_to_csv(rows: List[ProductRow], filename: str = "frouta_lachanika_products.csv") -> None:
+def save_to_csv(rows: List[ProductRow], filename: str) -> None:
     if not rows:
         print("No rows to save.")
         return
@@ -430,10 +475,20 @@ def save_to_csv(rows: List[ProductRow], filename: str = "frouta_lachanika_produc
 
 
 if __name__ == "__main__":
-    urls = crawl_frouta_lachanika()
-    print("candidates:", len(urls))
+    for category in ROOT_CATEGORIES:
+        try:
+            root_slug = to_category_slug(category)
+        except ValueError as exc:
+            print(exc)
+            continue
 
-    rows = scrape_and_filter(urls, expected_root="Φρούτα & Λαχανικά")
-    print("verified under Φρούτα & Λαχανικά:", len(rows))
+        root_listing = to_category_url(root_slug)
+        print(f"\n=== category={root_slug} ({root_listing}) ===")
 
-    save_to_csv(rows, "frouta_lachanika_products.csv")
+        urls = crawl_category(root_listing, max_pages=MAX_PAGES_PER_CATEGORY)
+        print("candidates:", len(urls))
+
+        rows = scrape_and_filter(urls, expected_root_slug=root_slug)
+        print(f"verified under {root_slug}:", len(rows))
+
+        save_to_csv(rows, csv_filename_for_category(root_slug))
