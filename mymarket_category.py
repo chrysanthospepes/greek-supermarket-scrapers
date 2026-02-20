@@ -48,8 +48,15 @@ class ProductRow:
     original_price: Optional[float] = None                # selling-unit original (if available)
     original_unit_price: Optional[float] = None           # original €/kg
     original_unit_price_unit: Optional[str] = None
+    
+    # NEW: set/bundle prices for 1+1 / 2+1 etc (σετ)
+    final_set_price: Optional[float] = None
+    original_set_price: Optional[float] = None
 
     discount_percent: Optional[int] = None
+    promo_text: Optional[str] = None
+    gift_buy_qty: Optional[int] = None
+    gift_free_qty: Optional[int] = None
 
     unit_text: Optional[str] = None
     root_category_slug: Optional[str] = None
@@ -170,6 +177,7 @@ def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]
 
 _code_re = re.compile(r"(Κωδ(?:ικός)?\s*[:：]\s*)(\d+)")
 _price_line_re = re.compile(r"(\d+[.,]\d+)\s*€\s*(.+)?$")
+_gift_offer_re = re.compile(r"(\d+)\s*\+\s*(\d+)")
 
 def extract_name(t: HTMLParser) -> Optional[str]:
     h1 = t.css_first("h1")
@@ -225,6 +233,91 @@ def extract_unit_text_dom(t: HTMLParser) -> Optional[str]:
 #                 return price, unit
 #     return None, None
 
+# def extract_prices(t: HTMLParser):
+#     def to_float(s: str) -> Optional[float]:
+#         s = (s or "").strip().replace("\xa0", " ")
+#         s = s.replace("€", "").strip()
+#         s = s.replace(".", "").replace(",", ".")
+#         try:
+#             return float(s)
+#         except ValueError:
+#             return None
+
+#     # selling-unit prices
+#     final_price = None
+#     original_price = None
+
+#     final_node = t.css_first(".product-full--price-per-selling-unit .product-full--final-price")
+#     if final_node:
+#         final_price = to_float(final_node.text(strip=True))
+
+#     old_node = (
+#         t.css_first(".product-full--price-per-selling-unit .product-full--old-price")
+#         or t.css_first(".product-full--price-per-selling-unit .line-through")
+#         or t.css_first(".product-full--price-per-selling-unit .diagonal-line")
+#     )
+#     if old_node:
+#         original_price = to_float(old_node.text(strip=True))
+
+#     # unit prices
+#     unit_price = None
+#     unit_price_unit = None
+#     original_unit_price = None
+#     original_unit_price_unit = None
+
+#     # Scan spans for the labels we care about, then read sibling/parent bold price
+#     for label_span in t.css("span"):
+#         label_text = (label_span.text(strip=True) or "").strip()
+#         if not label_text:
+#             continue
+
+#         is_original = label_text.startswith("Αρχική τιμή ")
+#         is_final = label_text.startswith("Τελική τιμή ")
+#         is_normal = label_text.startswith("Τιμή ")
+
+#         if not (is_original or is_final or is_normal):
+#             continue
+
+#         parent = label_span.parent
+#         if not parent:
+#             continue
+
+#         price_span = parent.css_first("span.font-bold")
+#         if not price_span:
+#             continue
+
+#         price_val = to_float(price_span.text(strip=True))
+
+#         if is_original:
+#             original_unit_price = price_val
+#             original_unit_price_unit = label_text
+#         elif is_final:
+#             unit_price = price_val
+#             unit_price_unit = label_text
+#         elif is_normal and unit_price is None:
+#             # only set normal unit price if we didn't already get "Τελική τιμή ..."
+#             unit_price = price_val
+#             unit_price_unit = label_text
+
+#     # discount percent
+#     discount_percent = None
+#     disc = t.css_first(".product-discount-tag")
+#     if disc:
+#         m = re.search(r"(-?\s*\d+)\s*%", disc.text(strip=True) or "")
+#         if m:
+#             try:
+#                 discount_percent = int(m.group(1).replace(" ", ""))
+#             except ValueError:
+#                 pass
+
+#     return (
+#         final_price, "EUR",
+#         unit_price, unit_price_unit,
+#         original_price,
+#         original_unit_price, original_unit_price_unit,
+#         discount_percent
+#     )
+
 def extract_prices(t: HTMLParser):
     def to_float(s: str) -> Optional[float]:
         s = (s or "").strip().replace("\xa0", " ")
@@ -235,7 +328,7 @@ def extract_prices(t: HTMLParser):
         except ValueError:
             return None
 
-    # selling-unit prices
+    # selling-unit prices (your existing logic)
     final_price = None
     original_price = None
 
@@ -251,47 +344,64 @@ def extract_prices(t: HTMLParser):
     if old_node:
         original_price = to_float(old_node.text(strip=True))
 
-    # unit prices
+    # -------------------------
+    # NEW: parse the "tag boxes"
+    # -------------------------
     unit_price = None
     unit_price_unit = None
     original_unit_price = None
     original_unit_price_unit = None
 
-    # Scan spans for the labels we care about, then read sibling/parent bold price
-    for label_span in t.css("span"):
-        label_text = (label_span.text(strip=True) or "").strip()
-        if not label_text:
-            continue
+    final_set_price = None
+    original_set_price = None
 
-        is_original = label_text.startswith("Αρχική τιμή ")
-        is_final = label_text.startswith("Τελική τιμή ")
-        is_normal = label_text.startswith("Τιμή ")
-
-        if not (is_original or is_final or is_normal):
-            continue
-
-        parent = label_span.parent
-        if not parent:
-            continue
-
-        price_span = parent.css_first("span.font-bold")
+    for box in t.css(".product-full--product-tags .rounded"):
+        price_span = box.css_first("span.font-bold")
         if not price_span:
             continue
 
         price_val = to_float(price_span.text(strip=True))
+        if price_val is None:
+            continue
 
-        if is_original:
-            original_unit_price = price_val
-            original_unit_price_unit = label_text
-        elif is_final:
-            unit_price = price_val
-            unit_price_unit = label_text
-        elif is_normal and unit_price is None:
-            # only set normal unit price if we didn't already get "Τελική τιμή ..."
-            unit_price = price_val
-            unit_price_unit = label_text
+        # Find a label that contains "τιμή" (avoid the "(5,80€ X 2)" line)
+        label = None
+        for s in box.css("span"):
+            txt = (s.text(strip=True) or "").strip()
+            if not txt:
+                continue
+            low = txt.lower()
+            if "τιμή" in low and "x" not in low:
+                label = txt
+                break
+        if not label:
+            continue
 
-    # discount percent
+        is_old = "diagonal-line" in (price_span.attributes.get("class") or "")
+
+        low_label = label.lower()
+        is_set = "σετ" in low_label
+        is_unit = any(k in low_label for k in ["κιλ", "λίτρ", "lt", "kg", "ml", "gr", "γρ"])
+
+        if is_set:
+            if is_old:
+                original_set_price = price_val
+            else:
+                final_set_price = price_val
+        elif is_unit:
+            if is_old:
+                original_unit_price = price_val
+                original_unit_price_unit = label
+            else:
+                # prefer "Τελική τιμή ..." if multiple appear
+                if unit_price is None or low_label.startswith("τελική"):
+                    unit_price = price_val
+                    unit_price_unit = label
+        else:
+            # if it's neither clearly unit nor set, ignore (or log it)
+            pass
+
+    # discount percent (your existing logic)
     discount_percent = None
     disc = t.css_first(".product-discount-tag")
     if disc:
@@ -307,8 +417,72 @@ def extract_prices(t: HTMLParser):
         unit_price, unit_price_unit,
         original_price,
         original_unit_price, original_unit_price_unit,
-        discount_percent
+        discount_percent,
+        final_set_price, original_set_price,
     )
+
+def _normalized_space(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
+
+
+def extract_gift_offer(t: HTMLParser, full_text: str):
+    """
+    Detect offers like '1+1 Δώρο' or '2+1 Δώρο'.
+    Returns (promo_text, buy_qty, free_qty).
+    """
+    gift_keyword_re = re.compile(r"\bδ(?:ώ|ω)ρο\b", re.IGNORECASE)
+    candidate_texts: List[str] = []
+
+    promo_selectors = [
+        ".product-discount-tag",
+        ".product-label",
+        ".product-tag",
+        ".product-badge",
+        "[class*='discount']",
+        "[class*='offer']",
+        "[class*='promo']",
+        "[class*='badge']",
+        "[class*='tag']",
+    ]
+
+    seen: Set[str] = set()
+    for selector in promo_selectors:
+        for node in t.css(selector):
+            txt = _normalized_space(node.text(separator=" ", strip=True))
+            if not txt:
+                continue
+            key = txt.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidate_texts.append(txt)
+
+    # Fallback for cases where promo text is not under known promo classes.
+    for line in full_text.splitlines():
+        txt = _normalized_space(line)
+        if not txt:
+            continue
+        if not gift_keyword_re.search(txt):
+            continue
+        key = txt.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidate_texts.append(txt)
+
+    for txt in candidate_texts:
+        if not gift_keyword_re.search(txt):
+            continue
+        match = _gift_offer_re.search(txt)
+        if match:
+            try:
+                buy_qty = int(match.group(1))
+                free_qty = int(match.group(2))
+                return txt, buy_qty, free_qty
+            except ValueError:
+                continue
+
+    return None, None, None
 
 def extract_breadcrumbs_dom(t: HTMLParser):
     """
@@ -370,8 +544,10 @@ def parse_product_page(html: str, url: str) -> ProductRow:
         unit_price, unit_label,
         original_price,
         original_unit_price, original_unit_label,
-        discount_percent
+        discount_percent,
+        final_set_price, original_set_price,
     ) = extract_prices(t)
+    promo_text, gift_buy_qty, gift_free_qty = extract_gift_offer(t, full_text)
 
     root_slug, root_cat, breadcrumbs = extract_breadcrumbs_dom(t)
 
@@ -387,6 +563,11 @@ def parse_product_page(html: str, url: str) -> ProductRow:
         original_unit_price=original_unit_price,
         original_unit_price_unit=original_unit_label,
         discount_percent=discount_percent,
+        promo_text=promo_text,
+        gift_buy_qty=gift_buy_qty,
+        gift_free_qty=gift_free_qty,
+        final_set_price=final_set_price,
+        original_set_price=original_set_price,
         unit_text=unit_text,
         root_category_slug=root_slug,
         root_category=root_cat,
