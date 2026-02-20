@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import re
 import time
@@ -12,9 +13,13 @@ BASE = "https://www.mymarket.gr"
 ROOT_CATEGORIES = [
     # "frouta-lachanika",
     # "fresko-kreas-psari",
-    "trofima",
+    # "trofima",
+    "katepsygmena-trofima",
 ]
 MAX_PAGES_PER_CATEGORY = 500
+PAGE_SLEEP_SECONDS = 0.3
+PRODUCT_SLEEP_SECONDS = 0
+PRODUCT_FETCH_CONCURRENCY = 12
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -426,36 +431,70 @@ def crawl_category(root_listing: str, max_pages: int = 500) -> List[str]:
             product_urls |= new_links
             print(f"page={page} +{len(product_urls)-before} total={len(product_urls)}")
 
-            time.sleep(0.5)
+            time.sleep(PAGE_SLEEP_SECONDS)
 
     return sorted(product_urls)
 
 
-def scrape_and_filter(urls: List[str], expected_root_slug: Optional[str] = None) -> List[ProductRow]:
+async def _fetch_one_product(
+    client: httpx.AsyncClient,
+    url: str,
+    expected_root_slug: Optional[str],
+    semaphore: asyncio.Semaphore,
+) -> Optional[ProductRow]:
+    async with semaphore:
+        try:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return None
+
+            row = parse_product_page(r.text, url)
+            if not row.name or not row.code:
+                return None
+
+            # Keep only those really under the expected root category slug.
+            if expected_root_slug and row.root_category_slug != expected_root_slug:
+                return None
+
+            if PRODUCT_SLEEP_SECONDS > 0:
+                await asyncio.sleep(PRODUCT_SLEEP_SECONDS)  # polite pacing
+            return row
+        except Exception as e:
+            print("ERROR on", url, "->", repr(e))
+            return None
+
+
+async def scrape_and_filter_async(
+    urls: List[str],
+    expected_root_slug: Optional[str] = None,
+    concurrency: int = PRODUCT_FETCH_CONCURRENCY,
+) -> List[ProductRow]:
     rows: List[ProductRow] = []
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    limits = httpx.Limits(
+        max_connections=max(1, concurrency),
+        max_keepalive_connections=max(1, concurrency),
+    )
 
-    with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as c:
-        for i, u in enumerate(urls, start=1):
-            try:
-                r = c.get(u)
-                if r.status_code != 200:
-                    continue
-                row = parse_product_page(r.text, u)
-                
-                if not row.name or not row.code:
-                    continue
+    async with httpx.AsyncClient(
+        headers=HEADERS,
+        timeout=30,
+        follow_redirects=True,
+        limits=limits,
+    ) as client:
+        tasks = [
+            asyncio.create_task(
+                _fetch_one_product(client, u, expected_root_slug, semaphore)
+            )
+            for u in urls
+        ]
 
-                # Keep only those really under the expected root category slug.
-                if expected_root_slug and row.root_category_slug != expected_root_slug:
-                    continue
+        for i, task in enumerate(asyncio.as_completed(tasks), start=1):
+            row = await task
+            if row:
                 rows.append(row)
-
-                if i % 50 == 0:
-                    print(f"scraped {i}/{len(urls)} -> kept {len(rows)}")
-                time.sleep(0.3)  # polite
-            except Exception as e:
-                print("ERROR on", u, "->", repr(e))
-                continue
+            if i % 50 == 0:
+                print(f"scraped {i}/{len(urls)} -> kept {len(rows)}")
 
     return rows
 
@@ -488,7 +527,13 @@ if __name__ == "__main__":
         urls = crawl_category(root_listing, max_pages=MAX_PAGES_PER_CATEGORY)
         print("candidates:", len(urls))
 
-        rows = scrape_and_filter(urls, expected_root_slug=root_slug)
+        rows = asyncio.run(
+            scrape_and_filter_async(
+                urls,
+                expected_root_slug=root_slug,
+                concurrency=PRODUCT_FETCH_CONCURRENCY,
+            )
+        )
         print(f"verified under {root_slug}:", len(rows))
 
         save_to_csv(rows, csv_filename_for_category(root_slug))
