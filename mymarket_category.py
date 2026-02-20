@@ -121,53 +121,44 @@ def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]
     t = HTMLParser(html)
     out: Set[str] = set()
 
-    # Find nodes that include "Κωδ:" (product code line on tiles)
-    for node in t.css("*"):
-        txt = node.text(strip=True)
-        if not txt or "Κωδ:" not in txt:
-            continue
+    # Product cards are consistently rendered as article.product--teaser.
+    # Pick one best product URL per card to avoid accidental misses from deep DOM walks.
+    for article in t.css("article.product--teaser"):
+        best_url = None
+        best_score = -1
 
-        cur = node
-        for _ in range(8):  # walk up ancestors
-            if cur is None:
-                break
+        for a in article.css("a[href]"):
+            href = (a.attributes.get("href") or "").strip()
+            if not href:
+                continue
 
-            container_text = cur.text(strip=True)
+            u = normalize(urljoin(BASE, href))
+            if not same_site(u) or not looks_like_product_url(u):
+                continue
 
-            # Stop at a "small" container that likely represents ONE product tile:
-            # it should contain exactly one Κωδ:
-            if container_text.count("Κωδ:") == 1:
-                anchors = cur.css("a[href]")
-                best = None
+            p = urlparse(u).path
+            if p.count("/") != 1 or len(p) <= 2:
+                continue
 
-                for a in anchors:
-                    a_text = (a.text(strip=True) or "").strip()
-                    href = a.attributes.get("href", "")
+            a_text = (a.text(strip=True) or "").strip()
+            rel_attr = (a.attributes.get("rel") or "").lower()
+            has_img = a.css_first("img") is not None
 
-                    # skip banner / CTA links
-                    if "αγόρασε" in a_text.lower():
-                        continue
+            # Prefer canonical product anchors (bookmark + title/image signals).
+            score = 0
+            if "bookmark" in rel_attr:
+                score += 2
+            if has_img:
+                score += 1
+            if len(a_text) >= 3:
+                score += 1
 
-                    u = normalize(urljoin(BASE, href))
-                    if not same_site(u) or not looks_like_product_url(u):
-                        continue
+            if score > best_score:
+                best_score = score
+                best_url = u
 
-                    p = urlparse(u).path
-                    if p.count("/") != 1 or len(p) <= 2:
-                        continue
-
-                    # Prefer anchors that look like product title/image links:
-                    # (usually have an <img> inside or non-trivial text)
-                    has_img = a.css_first("img") is not None
-                    if has_img or len(a_text) >= 3:
-                        best = u
-                        break
-
-                if best:
-                    out.add(best)
-                break
-
-            cur = cur.parent
+        if best_url:
+            out.add(best_url)
 
     out.discard(normalize(root_listing))
     return out
