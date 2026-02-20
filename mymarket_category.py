@@ -26,11 +26,20 @@ class ProductRow:
     name: Optional[str] = None
     code: Optional[str] = None
 
+    # current selling-unit final price (e.g. 0.99€ for 1 τεμ)
     final_price: Optional[float] = None
     currency: Optional[str] = None
 
+    # final unit price (e.g. final €/kg or €/lt)
     unit_price: Optional[float] = None
     unit_price_unit: Optional[str] = None
+
+    # NEW: original prices when discounted
+    original_price: Optional[float] = None                # selling-unit original (if available)
+    original_unit_price: Optional[float] = None           # original €/kg
+    original_unit_price_unit: Optional[str] = None
+
+    discount_percent: Optional[int] = None
 
     unit_text: Optional[str] = None
     root_category: Optional[str] = None
@@ -191,51 +200,90 @@ def extract_unit_text_dom(t: HTMLParser) -> Optional[str]:
 #                 return price, unit
 #     return None, None
 
-def extract_prices(t: HTMLParser) -> tuple[Optional[float], Optional[str], Optional[float], Optional[str]]:
-    """
-    Returns:
-      (final_price, final_price_currency, unit_price, unit_price_unit)
-    """
+def extract_prices(t: HTMLParser):
     def to_float(s: str) -> Optional[float]:
         s = (s or "").strip().replace("\xa0", " ")
         s = s.replace("€", "").strip()
-        # greek format: 12,38
         s = s.replace(".", "").replace(",", ".")
         try:
             return float(s)
         except ValueError:
             return None
 
-    # Final price (selling unit) like: <span class="product-full--final-price ...">0,99€</span>
+    # selling-unit prices
     final_price = None
+    original_price = None
+
     final_node = t.css_first(".product-full--price-per-selling-unit .product-full--final-price")
     if final_node:
         final_price = to_float(final_node.text(strip=True))
 
-    # Unit price block like:
-    # <div class="... text-center ...">
-    #   <span class="font-bold text-base">12,38€</span>
-    #   <span class="text-[7px] ...">Τιμή κιλού</span>
-    # </div>
-    unit_price = None
-    unit_label = None
+    old_node = (
+        t.css_first(".product-full--price-per-selling-unit .product-full--old-price")
+        or t.css_first(".product-full--price-per-selling-unit .line-through")
+        or t.css_first(".product-full--price-per-selling-unit .diagonal-line")
+    )
+    if old_node:
+        original_price = to_float(old_node.text(strip=True))
 
-    # Find a block that contains a "Τιμή ..." label and then read the number above it
-    for label in t.css("span"):
-        label_text = label.text(strip=True)
+    # unit prices
+    unit_price = None
+    unit_price_unit = None
+    original_unit_price = None
+    original_unit_price_unit = None
+
+    # Scan spans for the labels we care about, then read sibling/parent bold price
+    for label_span in t.css("span"):
+        label_text = (label_span.text(strip=True) or "").strip()
         if not label_text:
             continue
-        if label_text.startswith("Τιμή "):  # "Τιμή κιλού", "Τιμή λίτρου", etc.
-            unit_label = label_text
-            parent = label.parent
-            if parent:
-                # price is typically the first bold/base span in the same parent
-                price_span = parent.css_first("span.font-bold")
-                if price_span:
-                    unit_price = to_float(price_span.text(strip=True))
-            break
 
-    return final_price, "EUR", unit_price, unit_label
+        is_original = label_text.startswith("Αρχική τιμή ")
+        is_final = label_text.startswith("Τελική τιμή ")
+        is_normal = label_text.startswith("Τιμή ")
+
+        if not (is_original or is_final or is_normal):
+            continue
+
+        parent = label_span.parent
+        if not parent:
+            continue
+
+        price_span = parent.css_first("span.font-bold")
+        if not price_span:
+            continue
+
+        price_val = to_float(price_span.text(strip=True))
+
+        if is_original:
+            original_unit_price = price_val
+            original_unit_price_unit = label_text
+        elif is_final:
+            unit_price = price_val
+            unit_price_unit = label_text
+        elif is_normal and unit_price is None:
+            # only set normal unit price if we didn't already get "Τελική τιμή ..."
+            unit_price = price_val
+            unit_price_unit = label_text
+
+    # discount percent
+    discount_percent = None
+    disc = t.css_first(".product-discount-tag")
+    if disc:
+        m = re.search(r"(-?\s*\d+)\s*%", disc.text(strip=True) or "")
+        if m:
+            try:
+                discount_percent = int(m.group(1).replace(" ", ""))
+            except ValueError:
+                pass
+
+    return (
+        final_price, "EUR",
+        unit_price, unit_price_unit,
+        original_price,
+        original_unit_price, original_unit_price_unit,
+        discount_percent
+    )
 
 def extract_breadcrumbs_dom(t: HTMLParser):
     """
@@ -278,7 +326,13 @@ def parse_product_page(html: str, url: str) -> ProductRow:
     code = extract_code(full_text)
     unit_text = extract_unit_text_dom(t)
 
-    final_price, currency, unit_price, unit_label = extract_prices(t)
+    (
+        final_price, currency,
+        unit_price, unit_label,
+        original_price,
+        original_unit_price, original_unit_label,
+        discount_percent
+    ) = extract_prices(t)
 
     root_cat, breadcrumbs = extract_breadcrumbs_dom(t)
 
@@ -290,11 +344,14 @@ def parse_product_page(html: str, url: str) -> ProductRow:
         currency=currency,
         unit_price=unit_price,
         unit_price_unit=unit_label,
+        original_price=original_price,
+        original_unit_price=original_unit_price,
+        original_unit_price_unit=original_unit_label,
+        discount_percent=discount_percent,
         unit_text=unit_text,
         root_category=root_cat,
         breadcrumbs=breadcrumbs,
     )
-
 
 # -----------------------------
 # Crawl + verify + save
@@ -351,7 +408,8 @@ def scrape_and_filter(urls: List[str], expected_root: str = "Φρούτα & Λα
                 if i % 50 == 0:
                     print(f"scraped {i}/{len(urls)} -> kept {len(rows)}")
                 time.sleep(0.3)  # polite
-            except Exception:
+            except Exception as e:
+                print("ERROR on", u, "->", repr(e))
                 continue
 
     return rows
