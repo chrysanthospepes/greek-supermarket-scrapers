@@ -237,47 +237,38 @@ def extract_prices(t: HTMLParser) -> tuple[Optional[float], Optional[str], Optio
 
     return final_price, "EUR", unit_price, unit_label
 
-
-def extract_breadcrumbs(t: HTMLParser) -> tuple[Optional[str], Optional[str]]:
+def extract_breadcrumbs_dom(t: HTMLParser):
     """
-    Robust-ish heuristic:
-    - Collect anchor texts early in the DOM that look like breadcrumb category labels.
-    - Deduplicate while preserving order.
-    Returns (root_category, breadcrumb_string)
+    Find the breadcrumb <ol> by locating an <a> that links to /frouta-lachanika,
+    then walk up to its ancestor <ol>. Works even if classes change.
     """
-    # Grab anchor texts; on product pages breadcrumb links appear early.
-    texts: List[str] = []
-    for a in t.css("a[href]"):
-        txt = (a.text(strip=True) or "").strip()
-        if not txt:
-            continue
-        # avoid very long stuff and obvious navigation noise
-        if len(txt) > 60:
-            continue
-        if txt in ("", "mymarket.gr", "MY market"):
-            continue
-        texts.append(txt)
-        if len(texts) >= 40:  # we only need early part
-            break
+    a = t.css_first('ol a[href*="/frouta-lachanika"]')
+    if not a:
+        # fallback: any ol with several breadcrumb-like links near top
+        for ol in t.css("ol"):
+            links = [x.text(strip=True) for x in ol.css("a[href]") if x.text(strip=True)]
+            if 2 <= len(links) <= 10:
+                return links[0], " > ".join(links)
+        return None, None
 
-    # De-dupe preserving order
-    seen = set()
-    dedup = []
-    for x in texts:
-        if x not in seen:
-            seen.add(x)
-            dedup.append(x)
+    # walk up to the <ol>
+    cur = a
+    while cur and cur.tag != "ol":
+        cur = cur.parent
 
-    # Heuristic: root category is usually a known top-level label present in crumbs.
-    # If you want to be strict, set ROOT_LABEL = "Φρούτα & Λαχανικά" and require it.
-    root = None
-    for x in dedup:
-        if x in ("Φρούτα & Λαχανικά", "Φρέσκο Κρέας & Ψάρι", "Παντοπωλείο", "Κατεψυγμένα", "Ποτά"):
-            root = x
-            break
+    if not cur:
+        return None, None
 
-    breadcrumb_str = " > ".join(dedup[:10]) if dedup else None
-    return root, breadcrumb_str
+    links = []
+    for link in cur.css("a[href]"):
+        txt = (link.text(strip=True) or "").strip()
+        if txt:
+            links.append(txt)
+
+    if not links:
+        return None, None
+
+    return links[0], " > ".join(links)
 
 def parse_product_page(html: str, url: str) -> ProductRow:
     t = HTMLParser(html)
@@ -289,7 +280,7 @@ def parse_product_page(html: str, url: str) -> ProductRow:
 
     final_price, currency, unit_price, unit_label = extract_prices(t)
 
-    root_cat, breadcrumbs = extract_breadcrumbs(t)
+    root_cat, breadcrumbs = extract_breadcrumbs_dom(t)
 
     return ProductRow(
         url=url,
