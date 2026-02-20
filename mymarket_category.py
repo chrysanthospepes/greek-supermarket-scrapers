@@ -13,13 +13,26 @@ BASE = "https://www.mymarket.gr"
 ROOT_CATEGORIES = [
     # "frouta-lachanika",
     # "fresko-kreas-psari",
-    # "trofima",
+    # "galaktokomika-eidi-psygeiou",
+    # "tyria-allantika-deli",
     "katepsygmena-trofima",
+    # "mpyres-anapsyktika-krasia-pota",
+    # "proino-rofimata-kafes",
+    # "artozacharoplasteio-snacks",
+    # "trofima",
+    # "frontida-gia-to-moro-sas",
+    # "prosopiki-frontida",
+    # "oikiaki-frontida-chartika",
+    # "kouzina-mikrosyskeves-spiti",
+    # "frontida-gia-to-katoikidio-sas",
+    # "epochiaka",
 ]
 MAX_PAGES_PER_CATEGORY = 500
 PAGE_SLEEP_SECONDS = 0.3
 PRODUCT_SLEEP_SECONDS = 0
-PRODUCT_FETCH_CONCURRENCY = 12
+PRODUCT_FETCH_CONCURRENCY = 20
+# True: deterministic sort before CSV write. False: keep parser discovery order.
+SORT_PRODUCTS_FOR_CSV = False
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -97,7 +110,7 @@ def csv_filename_for_category(category: str) -> str:
     safe_slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", slug).strip("_")
     if not safe_slug:
         safe_slug = "category"
-    return f"{safe_slug}_products.csv"
+    return f"{safe_slug}-products.csv"
 
 def looks_like_product_url(u: str) -> bool:
     """
@@ -119,14 +132,56 @@ def listing_has_products(html: str) -> bool:
     # Listing pages typically contain many "Κωδ:" occurrences.
     return "Κωδ:" in html
 
+def extract_pagination_state(html: str):
+    """
+    Return (current_page, max_page, has_next) from listing HTML.
+    """
+    t = HTMLParser(html)
+
+    page_numbers: Set[int] = set()
+    current_page: Optional[int] = None
+
+    has_next = (
+        t.css_first("link[rel='next']") is not None
+        or t.css_first("a[rel='next']") is not None
+    )
+
+    current_node = t.css_first("[aria-current='page']")
+    if current_node:
+        m = re.search(r"\d+", current_node.text(strip=True) or "")
+        if m:
+            try:
+                current_page = int(m.group(0))
+                page_numbers.add(current_page)
+            except ValueError:
+                pass
+
+    for a in t.css("a[href]"):
+        href = (a.attributes.get("href") or "").strip()
+        if href:
+            m = _page_param_re.search(href)
+            if m:
+                try:
+                    page_numbers.add(int(m.group(1)))
+                except ValueError:
+                    pass
+
+        if (a.attributes.get("data-mkey") or "").strip().lower() == "next":
+            has_next = True
+
+    max_page = max(page_numbers) if page_numbers else None
+    return current_page, max_page, has_next
+
 
 # -----------------------------
 # Parsing: category listing pages
 # -----------------------------
 
-def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]:
+def extract_product_links_from_listing(html: str, root_listing: str) -> List[str]:
     t = HTMLParser(html)
-    out: Set[str] = set()
+    out: List[str] = []
+    seen: Set[str] = set()
+    root_listing = normalize(root_listing)
 
     # Product cards are consistently rendered as article.product--teaser.
     # Pick one best product URL per card to avoid accidental misses from deep DOM walks.
@@ -164,10 +219,10 @@ def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]
                 best_score = score
                 best_url = u
 
-        if best_url:
-            out.add(best_url)
+        if best_url and best_url != root_listing and best_url not in seen:
+            seen.add(best_url)
+            out.append(best_url)
 
-    out.discard(normalize(root_listing))
     return out
 
 
@@ -178,6 +233,7 @@ def extract_product_links_from_listing(html: str, root_listing: str) -> Set[str]
 _code_re = re.compile(r"(Κωδ(?:ικός)?\s*[:：]\s*)(\d+)")
 _price_line_re = re.compile(r"(\d+[.,]\d+)\s*€\s*(.+)?$")
 _gift_offer_re = re.compile(r"(\d+)\s*\+\s*(\d+)")
+_page_param_re = re.compile(r"[?&]page=(\d+)", re.IGNORECASE)
 
 def extract_name(t: HTMLParser) -> Optional[str]:
     h1 = t.css_first("h1")
@@ -213,110 +269,6 @@ def extract_unit_text_dom(t: HTMLParser) -> Optional[str]:
             return combo
 
     return None
-
-
-# def extract_price_and_unit(full_text: str) -> tuple[Optional[float], Optional[str]]:
-#     """
-#     Find a line like: "2,19€ Τιμή κιλού"
-#     """
-#     for line in full_text.splitlines():
-#         s = line.strip().replace("\xa0", " ")
-#         if "€" in s and ("Τιμή" in s or "τιμή" in s):
-#             m = _price_line_re.search(s)
-#             if m:
-#                 num = m.group(1).replace(".", "").replace(",", ".")
-#                 try:
-#                     price = float(num)
-#                 except ValueError:
-#                     price = None
-#                 unit = (m.group(2) or "").strip() or None
-#                 return price, unit
-#     return None, None
-
-# def extract_prices(t: HTMLParser):
-#     def to_float(s: str) -> Optional[float]:
-#         s = (s or "").strip().replace("\xa0", " ")
-#         s = s.replace("€", "").strip()
-#         s = s.replace(".", "").replace(",", ".")
-#         try:
-#             return float(s)
-#         except ValueError:
-#             return None
-
-#     # selling-unit prices
-#     final_price = None
-#     original_price = None
-
-#     final_node = t.css_first(".product-full--price-per-selling-unit .product-full--final-price")
-#     if final_node:
-#         final_price = to_float(final_node.text(strip=True))
-
-#     old_node = (
-#         t.css_first(".product-full--price-per-selling-unit .product-full--old-price")
-#         or t.css_first(".product-full--price-per-selling-unit .line-through")
-#         or t.css_first(".product-full--price-per-selling-unit .diagonal-line")
-#     )
-#     if old_node:
-#         original_price = to_float(old_node.text(strip=True))
-
-#     # unit prices
-#     unit_price = None
-#     unit_price_unit = None
-#     original_unit_price = None
-#     original_unit_price_unit = None
-
-#     # Scan spans for the labels we care about, then read sibling/parent bold price
-#     for label_span in t.css("span"):
-#         label_text = (label_span.text(strip=True) or "").strip()
-#         if not label_text:
-#             continue
-
-#         is_original = label_text.startswith("Αρχική τιμή ")
-#         is_final = label_text.startswith("Τελική τιμή ")
-#         is_normal = label_text.startswith("Τιμή ")
-
-#         if not (is_original or is_final or is_normal):
-#             continue
-
-#         parent = label_span.parent
-#         if not parent:
-#             continue
-
-#         price_span = parent.css_first("span.font-bold")
-#         if not price_span:
-#             continue
-
-#         price_val = to_float(price_span.text(strip=True))
-
-#         if is_original:
-#             original_unit_price = price_val
-#             original_unit_price_unit = label_text
-#         elif is_final:
-#             unit_price = price_val
-#             unit_price_unit = label_text
-#         elif is_normal and unit_price is None:
-#             # only set normal unit price if we didn't already get "Τελική τιμή ..."
-#             unit_price = price_val
-#             unit_price_unit = label_text
-
-#     # discount percent
-#     discount_percent = None
-#     disc = t.css_first(".product-discount-tag")
-#     if disc:
-#         m = re.search(r"(-?\s*\d+)\s*%", disc.text(strip=True) or "")
-#         if m:
-#             try:
-#                 discount_percent = int(m.group(1).replace(" ", ""))
-#             except ValueError:
-#                 pass
-
-#     return (
-#         final_price, "EUR",
-#         unit_price, unit_price_unit,
-#         original_price,
-#         original_unit_price, original_unit_price_unit,
-#         discount_percent
-#     )
 
 def extract_prices(t: HTMLParser):
     def to_float(s: str) -> Optional[float]:
@@ -580,7 +532,8 @@ def parse_product_page(html: str, url: str) -> ProductRow:
 
 def crawl_category(root_listing: str, max_pages: int = 500) -> List[str]:
     root_listing = normalize(root_listing.rstrip("/"))
-    product_urls: Set[str] = set()
+    product_urls: List[str] = []
+    seen_urls: Set[str] = set()
 
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as c:
         for page in range(1, max_pages + 1):
@@ -593,19 +546,47 @@ def crawl_category(root_listing: str, max_pages: int = 500) -> List[str]:
 
             r.raise_for_status()
             html = r.text
+            current_page, max_page, has_next = extract_pagination_state(html)
+
+            # Out-of-range requests can return a remapped page while still containing products.
+            if current_page is not None and current_page != page:
+                print(
+                    f"page={page} -> server current_page={current_page}, "
+                    "stopping pagination."
+                )
+                break
 
             new_links = extract_product_links_from_listing(html, root_listing=root_listing)
             if not new_links:
                 print(f"page={page} -> 0 products, stopping.")
                 break
 
-            before = len(product_urls)
-            product_urls |= new_links
-            print(f"page={page} +{len(product_urls)-before} total={len(product_urls)}")
+            added = 0
+            for u in new_links:
+                if u in seen_urls:
+                    continue
+                seen_urls.add(u)
+                product_urls.append(u)
+                added += 1
+            print(f"page={page} +{added} total={len(product_urls)}")
+
+            # Some category endpoints may keep returning non-empty duplicate pages
+            # past the real last page; stop when no new unique products are discovered.
+            if added == 0:
+                print(f"page={page} -> 0 NEW unique products, stopping.")
+                break
+
+            if max_page is not None and page >= max_page:
+                print(f"page={page} -> reached max_page={max_page}, stopping.")
+                break
+
+            if not has_next:
+                print(f"page={page} -> no next page in pagination, stopping.")
+                break
 
             time.sleep(PAGE_SLEEP_SECONDS)
 
-    return sorted(product_urls)
+    return product_urls
 
 
 async def _fetch_one_product(
@@ -641,7 +622,8 @@ async def scrape_and_filter_async(
     expected_root_slug: Optional[str] = None,
     concurrency: int = PRODUCT_FETCH_CONCURRENCY,
 ) -> List[ProductRow]:
-    rows: List[ProductRow] = []
+    ordered_rows: List[Optional[ProductRow]] = [None] * len(urls)
+    kept = 0
     semaphore = asyncio.Semaphore(max(1, concurrency))
     limits = httpx.Limits(
         max_connections=max(1, concurrency),
@@ -654,21 +636,26 @@ async def scrape_and_filter_async(
         follow_redirects=True,
         limits=limits,
     ) as client:
+        async def fetch_with_index(index: int, product_url: str):
+            row = await _fetch_one_product(client, product_url, expected_root_slug, semaphore)
+            return index, row
+
         tasks = [
             asyncio.create_task(
-                _fetch_one_product(client, u, expected_root_slug, semaphore)
+                fetch_with_index(i, u)
             )
-            for u in urls
+            for i, u in enumerate(urls)
         ]
 
         for i, task in enumerate(asyncio.as_completed(tasks), start=1):
-            row = await task
+            idx, row = await task
             if row:
-                rows.append(row)
+                ordered_rows[idx] = row
+                kept += 1
             if i % 50 == 0:
-                print(f"scraped {i}/{len(urls)} -> kept {len(rows)}")
+                print(f"scraped {i}/{len(urls)} -> kept {kept}")
 
-    return rows
+    return [row for row in ordered_rows if row]
 
 def save_to_csv(rows: List[ProductRow], filename: str) -> None:
     if not rows:
@@ -707,5 +694,8 @@ if __name__ == "__main__":
             )
         )
         print(f"verified under {root_slug}:", len(rows))
+
+        if SORT_PRODUCTS_FOR_CSV:
+            rows.sort(key=lambda row: (row.url or "").lower())
 
         save_to_csv(rows, csv_filename_for_category(root_slug))
