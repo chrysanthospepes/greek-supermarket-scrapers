@@ -33,6 +33,9 @@ MAX_PAGES_PER_CATEGORY = 500
 PAGE_SLEEP_SECONDS = 0.3
 # True: deterministic sort before CSV write. False: keep parser discovery order.
 SORT_PRODUCTS_FOR_CSV = True
+REQUEST_RETRY_ATTEMPTS = 3
+REQUEST_RETRY_BACKOFF_SECONDS = 1.0
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -376,7 +379,6 @@ def parse_price_labels(article):
 
 def parse_listing_article(
     article,
-    root_slug: str,
     root_category: str,
 ) -> Optional[ListingProductRow]:
     analytics = parse_analytics_payload(article)
@@ -405,7 +407,7 @@ def parse_listing_article(
     if final_price is None and analytics.get("price") is not None:
         final_price = parse_price_number(str(analytics.get("price")))
 
-    offer = (
+    has_price_discount = (
         (original_price is not None and final_price is not None and original_price > final_price)
         or (
             original_unit_price is not None
@@ -418,6 +420,7 @@ def parse_listing_article(
             and original_set_price > final_set_price
         )
     )
+    offer = discount_percent is not None or has_price_discount
 
     row = ListingProductRow(
         url=url,
@@ -443,9 +446,48 @@ def parse_listing_article(
     return row
 
 
+def fetch_listing_page(client: httpx.Client, url: str, page: int) -> httpx.Response:
+    last_error: Optional[Exception] = None
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        try:
+            response = client.get(url)
+        except httpx.RequestError as exc:
+            last_error = exc
+            if attempt >= REQUEST_RETRY_ATTEMPTS:
+                raise
+
+            wait_seconds = REQUEST_RETRY_BACKOFF_SECONDS * attempt
+            print(
+                f"page={page} -> request error ({exc}), "
+                f"retrying in {wait_seconds:.1f}s "
+                f"({attempt}/{REQUEST_RETRY_ATTEMPTS})."
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        if response.status_code == 404:
+            return response
+
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < REQUEST_RETRY_ATTEMPTS:
+            wait_seconds = REQUEST_RETRY_BACKOFF_SECONDS * attempt
+            print(
+                f"page={page} -> status={response.status_code}, "
+                f"retrying in {wait_seconds:.1f}s "
+                f"({attempt}/{REQUEST_RETRY_ATTEMPTS})."
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        response.raise_for_status()
+        return response
+
+    if last_error is not None:
+        raise RuntimeError(f"page={page} -> exhausted retries") from last_error
+    raise RuntimeError(f"page={page} -> exhausted retries")
+
+
 def crawl_category_listing(
     root_listing: str,
-    root_slug: str,
     root_category: str,
     max_pages: int = 500,
 ) -> List[ListingProductRow]:
@@ -456,7 +498,7 @@ def crawl_category_listing(
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
         for page in range(1, max_pages + 1):
             url = root_listing if page == 1 else f"{root_listing}?page={page}"
-            response = client.get(url)
+            response = fetch_listing_page(client=client, url=url, page=page)
 
             if response.status_code == 404:
                 print(f"page={page} -> 404, stopping pagination.")
@@ -483,7 +525,6 @@ def crawl_category_listing(
             for article in articles:
                 row = parse_listing_article(
                     article,
-                    root_slug=root_slug,
                     root_category=root_category,
                 )
                 if not row:
@@ -501,8 +542,7 @@ def crawl_category_listing(
             print(f"page={page} +{added} total={len(rows)} cards={len(articles)}")
 
             if added == 0:
-                print(f"page={page} -> 0 NEW unique products, stopping.")
-                break
+                print(f"page={page} -> 0 NEW unique products, continuing.")
 
             if max_page is not None and page >= max_page:
                 print(f"page={page} -> reached max_page={max_page}, stopping.")
@@ -545,7 +585,6 @@ if __name__ == "__main__":
 
         rows = crawl_category_listing(
             root_listing=root_listing,
-            root_slug=root_slug,
             root_category=root_slug,
             max_pages=MAX_PAGES_PER_CATEGORY,
         )
