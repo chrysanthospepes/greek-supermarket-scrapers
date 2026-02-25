@@ -556,12 +556,6 @@ def parse_listing_article(
     if brand is not None:
         brand = normalize_spaces(html.unescape(str(brand))) or None
 
-    root_category_name = analytics_item.get("item_list_name")
-    if not isinstance(root_category_name, str) or not root_category_name.strip():
-        root_category_name = root_category
-    else:
-        root_category_name = normalize_spaces(root_category_name)
-
     row = ListingProductRow(
         url=url,
         name=name,
@@ -578,7 +572,7 @@ def parse_listing_article(
         offer=offer,
         one_plus_one=one_plus_one,
         image_url=parse_image_url(article),
-        root_category=root_category_name,
+        root_category=root_category,
     )
 
     if not row.url and not row.name and not row.sku:
