@@ -528,6 +528,13 @@ def parse_listing_article(
     if final_price is None:
         final_price = analytics_price
 
+    if (
+        final_unit_price is None
+        and original_unit_price is None
+        and final_price is not None
+    ):
+        final_unit_price = final_price
+
     if discount_percent is None:
         if final_price and original_price and original_price > final_price:
             discount_percent = int(round(((original_price - final_price) / original_price) * 100))

@@ -407,6 +407,13 @@ def parse_listing_article(
     if final_price is None and analytics.get("price") is not None:
         final_price = parse_price_number(str(analytics.get("price")))
 
+    if (
+        final_unit_price is None
+        and original_unit_price is None
+        and final_price is not None
+    ):
+        final_unit_price = final_price
+
     has_price_discount = (
         (original_price is not None and final_price is not None and original_price > final_price)
         or (
