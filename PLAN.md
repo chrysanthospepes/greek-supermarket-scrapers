@@ -41,15 +41,25 @@ Create these core models:
 - `unit_of_measure`
 - `offer`
 - `snapshot_at` (datetime of crawl/import)
+- `last_seen_at` (updated every successful crawl for this listing)
+- `is_active` (true if still present in latest crawl)
 - `product` (FK to canonical `Product`, nullable initially)
 
-5. `PriceHistory` (optional now, useful later)
+5. `CrawlerRun` (daily run observability)
+- `store` (FK)
+- `started_at`
+- `finished_at`
+- `status` (`running/success/failed/partial`)
+- `error_summary`
+- `items_seen`
+
+6. `PriceHistory` (required for daily snapshots)
 - `store_listing` (FK)
 - `price`
 - `unit_price`
 - `captured_at`
 
-6. `MatchReview` (manual review queue)
+7. `MatchReview` (manual review queue)
 - `store_listing` (FK)
 - `candidate_product` (FK)
 - `score`
@@ -62,9 +72,14 @@ Build management command:
 - `python manage.py import_store_csv --store mymarket --file frouta-lachanika-listing-products.csv`
 
 Rules:
-- Always insert/update `StoreListing`.
+- Always upsert `StoreListing` (idempotent import).
+- Use stable uniqueness key per store (`store + sku` when reliable, fallback `store + url`).
 - Keep raw store fields unchanged.
+- Set `last_seen_at` for rows present in current crawl.
+- Mark missing rows as `is_active=False` instead of deleting.
 - Link to `Product` only after matching pipeline runs.
+- Write one `CrawlerRun` record per store crawl.
+- Append `PriceHistory` snapshot each run.
 
 ## 3. Name Normalization + Attribute Extraction
 Create a shared matcher utility (`matching/normalizer.py`) that:
@@ -153,6 +168,11 @@ UI page:
 3. Import tests:
 - importing same CSV twice updates listing without duplicates
 
+4. Daily pipeline tests:
+- listings missing from a new run become `is_active=False`
+- `PriceHistory` is appended once per run per listing
+- `CrawlerRun` status and counters are persisted
+
 ## 9. Rollout Steps
 1. Implement models + migrations.
 2. Implement CSV import command.
@@ -162,6 +182,96 @@ UI page:
 6. Build first comparison view/API.
 7. Add more categories/stores.
 
-## 10. Practical Rule of Thumb
+## 10. Daily Automation Operations
+Run each crawler/store as a scheduled job (daily).
+
+Operational requirements:
+- Retries with backoff for transient crawler errors.
+- Alert when a run fails or when data quality checks fail.
+- Data quality checks after each run.
+- Check for sudden row-count drop per store/category.
+- Check for spike in null prices/unit prices.
+- Check for duplicate SKU/url spike.
+- Keep matcher incremental: process only new/changed listings in daily runs.
+- Run periodic full rematch (e.g. weekly) only if normalization/matching rules change.
+
+## 11. Practical Rule of Thumb
 Never merge two listings into one `Product` unless quantity and category align.  
 Most bad matches happen from name similarity alone without pack-size validation.
+
+## 12. Django Project Structure (Minimal Apps)
+Use one Django project (`config`) and three Django apps created with `startapp`.
+
+Commands:
+- `python manage.py startapp catalog`
+- `python manage.py startapp ingestion`
+- `python manage.py startapp comparison`
+
+Root structure:
+
+```text
+supermarkets/
+  manage.py
+  config/
+    __init__.py
+    settings.py
+    urls.py
+    asgi.py
+    wsgi.py
+  catalog/
+    models.py
+    admin.py
+    migrations/
+    tests.py
+  ingestion/
+    models.py
+    admin.py
+    migrations/
+    management/
+      commands/
+        import_store_csv.py
+        run_daily_ingestion.py
+    tests.py
+  comparison/
+    urls.py
+    views.py
+    templates/
+      comparison/
+    migrations/
+    tests.py
+```
+
+App ownership:
+- `catalog`: `Store`, `Category`, `Product`, `StoreListing`, `PriceHistory`, `MatchReview`.
+- `ingestion`: `CrawlerRun`, CSV imports, daily scheduled ingestion workflow.
+- `comparison`: comparison endpoints/pages for side-by-side store offers.
+
+## 13. Crawler Implementation + Database Choice
+Start scope:
+- 2 stores, 1 category, daily runs.
+- Keep CSV export enabled for visibility/debugging while the pipeline stabilizes.
+
+Database:
+- Use PostgreSQL from day 1.
+- Store all money fields as `Decimal` in Django (`DecimalField`), not float.
+- Add unique constraints/indexes for ingestion keys (at minimum on `store + sku` and fallback `store + url` logic).
+- Optional later: enable `pg_trgm` for fuzzy matching acceleration.
+
+Crawler integration pattern:
+- Keep crawler code separate from Django domain logic.
+- Each crawler outputs the same normalized row schema (current CSV columns are fine).
+- Ingestion command reads crawler output and performs idempotent upserts.
+- Crawler code must not write directly to canonical grouping tables (`Product`/matching decisions).
+
+Daily execution flow:
+1. Run store crawler.
+2. Create `CrawlerRun` (`running`).
+3. Import rows (upsert `StoreListing`, set `last_seen_at`).
+4. Append `PriceHistory` snapshot for current prices.
+5. Mark not-seen listings as `is_active=False`.
+6. Run matcher only for new/changed listings.
+7. Finalize `CrawlerRun` as `success/failed/partial` with counters and error summary.
+
+Scheduling:
+- Start with OS cron (simple, reliable).
+- Move to Celery/worker scheduling only when needed.
