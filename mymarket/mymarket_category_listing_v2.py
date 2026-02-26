@@ -30,7 +30,7 @@ ROOT_CATEGORIES = [
     # "epochiaka",
 ]
 MAX_PAGES_PER_CATEGORY = 500
-PAGE_SLEEP_SECONDS = 0.3
+PAGE_SLEEP_SECONDS = 0.1
 # True: deterministic sort before CSV write. False: keep parser discovery order.
 SORT_PRODUCTS_FOR_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3

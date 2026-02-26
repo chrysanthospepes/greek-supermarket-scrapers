@@ -4,7 +4,8 @@ import json
 import re
 import time
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -41,7 +42,7 @@ ROOT_CATEGORIES = [
     # "chartopoleio",
 ]
 MAX_PAGES_PER_CATEGORY = 500
-PAGE_SLEEP_SECONDS = 0.3
+PAGE_SLEEP_SECONDS = 0.1
 # True: deterministic sort before CSV write. False: keep parser discovery order.
 SORT_PRODUCTS_FOR_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3
@@ -53,6 +54,27 @@ HEADERS = {
     "Accept-Language": "el-GR,el;q=0.9,en;q=0.8",
 }
 
+BASE_NETLOC = urlparse(BASE).netloc
+PROMO_SELECTORS = (
+    ".sign-badges .badge",
+    ".offer-span",
+    ".product-discount-tag",
+    ".product-note-tag",
+    ".product-label",
+    ".product-tag",
+    ".product-badge",
+    ".product-flags_figure",
+    ".sign-new_figure",
+    "[class*='offer']",
+    "[class*='discount']",
+    "[class*='promo']",
+    "[class*='badge']",
+    "[class*='tag']",
+    "[class*='flag']",
+    "[class*='sign']",
+)
+_spaces_re = re.compile(r"\s+")
+_non_price_chars_re = re.compile(r"[^0-9,.\-]")
 _one_plus_one_re = re.compile(r"\b1\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&](?:pg|page)=(\d+)", re.IGNORECASE)
@@ -84,14 +106,16 @@ class ListingProductRow:
 
 
 def normalize_spaces(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
+    return _spaces_re.sub(" ", (text or "").replace("\xa0", " ")).strip()
 
 
+@lru_cache(maxsize=512)
 def normalize_text_no_accents(text: str) -> str:
     normalized = unicodedata.normalize("NFD", normalize_spaces(text).lower())
     return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
 
 
+@lru_cache(maxsize=512)
 def detect_unit_of_measure(label: str) -> Optional[str]:
     low = normalize_text_no_accents(label)
     if any(token in low for token in ("κιλου", "κιλα", "κιλο", "/kg")):
@@ -102,7 +126,7 @@ def detect_unit_of_measure(label: str) -> Optional[str]:
 
 
 def same_site(url: str) -> bool:
-    return urlparse(url).netloc == urlparse(BASE).netloc
+    return urlparse(url).netloc == BASE_NETLOC
 
 
 def normalize(url: str) -> str:
@@ -139,7 +163,7 @@ def parse_price_number(text: str) -> Optional[float]:
 
     s = s.replace("EUR", "")
     s = s.replace("€", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
+    s = _non_price_chars_re.sub("", s)
     if not s:
         return None
 
@@ -227,18 +251,17 @@ def parse_product_meta(article) -> Dict[str, Any]:
 
 
 def extract_pagination_state(
-    html_text: str,
+    tree: HTMLParser,
     requested_page: int,
 ) -> Tuple[Optional[int], Optional[int], bool, Optional[int], Optional[int]]:
-    t = HTMLParser(html_text)
     page_numbers: Set[int] = set()
     next_page: Optional[int] = None
     has_next = (
-        t.css_first("link[rel='next']") is not None
-        or t.css_first("a[rel='next']") is not None
+        tree.css_first("link[rel='next']") is not None
+        or tree.css_first("a[rel='next']") is not None
     )
 
-    next_node = t.css_first("section.pagination.go-next")
+    next_node = tree.css_first("section.pagination.go-next")
     if next_node:
         raw = (next_node.attributes.get("data-pg") or "").strip()
         if raw.isdigit():
@@ -246,7 +269,7 @@ def extract_pagination_state(
             page_numbers.add(next_page)
             has_next = True
 
-    for a in t.css("section.pagination a[href], a[rel='next'][href]"):
+    for a in tree.css("section.pagination a[href], a[rel='next'][href]"):
         href = (a.attributes.get("href") or "").strip()
         if href:
             m = _page_param_re.search(href)
@@ -262,16 +285,16 @@ def extract_pagination_state(
             has_next = True
 
     if next_page is None and page_numbers:
-        greater_pages = [p for p in page_numbers if p > requested_page]
-        if greater_pages:
-            next_page = min(greater_pages)
+        candidate = min((p for p in page_numbers if p > requested_page), default=None)
+        if candidate is not None:
+            next_page = candidate
             has_next = True
 
     max_page = max(page_numbers) if page_numbers else None
 
     current_count = None
     total_count = None
-    count_node = t.css_first("section.pagination .current-page")
+    count_node = tree.css_first("section.pagination .current-page")
     if count_node:
         txt = normalize_spaces(count_node.text(separator=" ", strip=True))
         nums = [int(n) for n in re.findall(r"\d+", txt)]
@@ -282,7 +305,7 @@ def extract_pagination_state(
     return next_page, max_page, has_next, current_count, total_count
 
 
-def parse_sku(article, analytics_item: Dict[str, Any], product_meta: Dict[str, Any]) -> Optional[str]:
+def parse_sku(analytics_item: Dict[str, Any], product_meta: Dict[str, Any]) -> Optional[str]:
     sku = product_meta.get("sku")
     if sku:
         return str(sku).strip()
@@ -309,24 +332,7 @@ def parse_promo(article) -> Tuple[Optional[int], bool]:
         seen.add(key)
         candidates.append(txt)
 
-    for selector in (
-        ".sign-badges .badge",
-        ".offer-span",
-        ".product-discount-tag",
-        ".product-note-tag",
-        ".product-label",
-        ".product-tag",
-        ".product-badge",
-        ".product-flags_figure",
-        ".sign-new_figure",
-        "[class*='offer']",
-        "[class*='discount']",
-        "[class*='promo']",
-        "[class*='badge']",
-        "[class*='tag']",
-        "[class*='flag']",
-        "[class*='sign']",
-    ):
+    for selector in PROMO_SELECTORS:
         for node in article.css(selector):
             add_candidate(node.text(separator=" ", strip=True))
             add_candidate(node.attributes.get("title"))
@@ -398,7 +404,7 @@ def parse_image_url(article) -> Optional[str]:
     return normalize(urljoin(BASE, src))
 
 
-def parse_unit_prices(article) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+def parse_unit_prices(article, main_price_block=None) -> Tuple[Optional[float], Optional[float], Optional[str]]:
     def parse_unit_block(block) -> Tuple[Optional[float], Optional[float], Optional[str]]:
         if block is None:
             return None, None, None
@@ -441,7 +447,7 @@ def parse_unit_prices(article) -> Tuple[Optional[float], Optional[float], Option
     # Some cards (especially kilo-only/liter-only) keep unit pricing in main-price.
     if final_unit_price is None and unit_of_measure is None:
         main_final, main_original, main_unit_label = parse_unit_block(
-            article.css_first(".priceWrp .main-price")
+            main_price_block if main_price_block is not None else article.css_first(".priceWrp .main-price")
         )
         main_uom = detect_unit_of_measure(main_unit_label or "")
         if main_uom is not None:
@@ -462,8 +468,8 @@ def parse_unit_prices(article) -> Tuple[Optional[float], Optional[float], Option
     return final_unit_price, original_unit_price, unit_of_measure
 
 
-def parse_main_prices(article, analytics_price: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
-    block = article.css_first(".priceWrp .main-price")
+def parse_main_prices(main_price_block, analytics_price: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    block = main_price_block
     if not block:
         return analytics_price, None
 
@@ -474,10 +480,14 @@ def parse_main_prices(article, analytics_price: Optional[float]) -> Tuple[Option
             break
 
     final_price = None
+    values: List[float] = []
     for node in block.css(".price"):
-        final_price = parse_price_number(node.text(separator=" ", strip=True))
-        if final_price is not None:
-            break
+        value = parse_price_number(node.text(separator=" ", strip=True))
+        if value is None:
+            continue
+        values.append(value)
+        if final_price is None:
+            final_price = value
 
     if final_price is None:
         final_price = parse_first_price_before_currency(block.text(separator=" ", strip=True))
@@ -486,11 +496,6 @@ def parse_main_prices(article, analytics_price: Optional[float]) -> Tuple[Option
         final_price = analytics_price
 
     if original_price is None:
-        values: List[float] = []
-        for node in block.css(".price"):
-            value = parse_price_number(node.text(separator=" ", strip=True))
-            if value is not None:
-                values.append(value)
         unique_values = sorted(set(values))
         if len(unique_values) >= 2:
             final_price = final_price if final_price is not None else unique_values[0]
@@ -519,11 +524,18 @@ def parse_listing_article(
 
     name = parse_name(article, analytics_item=analytics_item)
     url = parse_product_url(article)
-    sku = parse_sku(article, analytics_item=analytics_item, product_meta=product_meta)
+    sku = parse_sku(analytics_item=analytics_item, product_meta=product_meta)
     discount_percent, one_plus_one = parse_promo(article)
 
-    final_unit_price, original_unit_price, unit_of_measure = parse_unit_prices(article)
-    final_price, original_price = parse_main_prices(article, analytics_price=analytics_price)
+    main_price_block = article.css_first(".priceWrp .main-price")
+    final_unit_price, original_unit_price, unit_of_measure = parse_unit_prices(
+        article,
+        main_price_block=main_price_block,
+    )
+    final_price, original_price = parse_main_prices(
+        main_price_block,
+        analytics_price=analytics_price,
+    )
 
     if final_price is None:
         final_price = analytics_price
@@ -563,6 +575,9 @@ def parse_listing_article(
     if brand is not None:
         brand = normalize_spaces(html.unescape(str(brand))) or None
 
+    if not url and not name and not sku:
+        return None
+
     row = ListingProductRow(
         url=url,
         name=name,
@@ -582,8 +597,6 @@ def parse_listing_article(
         root_category=root_category,
     )
 
-    if not row.url and not row.name and not row.sku:
-        return None
     return row
 
 
@@ -655,12 +668,12 @@ def crawl_category_listing(
 
             response.raise_for_status()
             html_text = response.text
+            t = HTMLParser(html_text)
             next_page, max_page, has_next, current_count, total_count = extract_pagination_state(
-                html_text=html_text,
+                tree=t,
                 requested_page=page,
             )
 
-            t = HTMLParser(html_text)
             articles = t.css("section.productList div[data-plugin-product]")
             if not articles:
                 articles = t.css("div[data-plugin-product]")
@@ -716,12 +729,11 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
         print("No rows to save.")
         return
 
-    fieldnames = list(asdict(rows[0]).keys())
+    fieldnames = [field.name for field in fields(ListingProductRow)]
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for row in rows:
-            writer.writerow(asdict(row))
+        writer.writerows(row.__dict__ for row in rows)
 
     print(f"Saved {len(rows)} rows to {filename}")
 
