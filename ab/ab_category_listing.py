@@ -144,7 +144,7 @@ def detect_unit_of_measure(label: str) -> Optional[str]:
             " each",
         )
     ):
-        return "pieces"
+        return "piece"
     return None
 
 
@@ -502,6 +502,7 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
     offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
     if discount_percent is not None or one_plus_one or two_plus_one:
         promo_text = None
+    unit_of_measure = unit_of_measure or "piece"
 
     row = ListingProductRow(
         url=url,
@@ -536,7 +537,7 @@ def detect_unit_of_measure_from_code(unit_code: Optional[str], label: str = "") 
     if code in {"liter", "litre", "l", "lt"}:
         return "liters"
     if code in {"piece", "pieces", "pc", "pcs", "ea", "each", "item", "τεμ", "τμχ", "tmx"}:
-        return "pieces"
+        return "piece"
     return detect_unit_of_measure(label)
 
 
@@ -685,6 +686,7 @@ def parse_api_listing_product(
         ]
     ).strip()
     unit_of_measure = detect_unit_of_measure_from_code(price.get("unitCode"), unit_label)
+    unit_of_measure = unit_of_measure or "piece"
 
     (
         discount_percent,

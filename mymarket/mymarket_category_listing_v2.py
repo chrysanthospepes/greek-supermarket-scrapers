@@ -13,7 +13,7 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.mymarket.gr"
 ROOT_CATEGORIES = [
-    "frouta-lachanika",
+    # "frouta-lachanika",
     # "fresko-kreas-psari",
     # "galaktokomika-eidi-psygeiou",
     # "tyria-allantika-deli",
@@ -25,7 +25,7 @@ ROOT_CATEGORIES = [
     # "frontida-gia-to-moro-sas",
     # "prosopiki-frontida",
     # "oikiaki-frontida-chartika",
-    # "kouzina-mikrosyskeves-spiti",
+    "kouzina-mikrosyskeves-spiti",
     # "frontida-gia-to-katoikidio-sas",
     # "epochiaka",
 ]
@@ -44,6 +44,7 @@ HEADERS = {
 
 _code_re = re.compile(r"(Κωδ(?:ικός)?\s*[:：]\s*)(\d+)")
 _one_plus_one_re = re.compile(r"\b1\s*\+\s*1\b")
+_two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&]page=(\d+)", re.IGNORECASE)
 
@@ -66,6 +67,8 @@ class ListingProductRow:
     discount_percent: Optional[int] = None
     offer: bool = False
     one_plus_one: bool = False
+    two_plus_one: bool = False
+    promo_text: Optional[str] = None
 
     image_url: Optional[str] = None
 
@@ -99,7 +102,7 @@ def detect_unit_of_measure(label: str) -> Optional[str]:
             "each",
         )
     ):
-        return "pieces"
+        return "piece"
     return None
 
 
@@ -235,9 +238,20 @@ def parse_sku(article) -> Optional[str]:
     return None
 
 
-def parse_promo(article) -> Tuple[Optional[int], bool]:
+def parse_promo(article) -> Tuple[Optional[int], bool, bool, Optional[str]]:
     candidates: List[str] = []
     seen: Set[str] = set()
+
+    def add_candidate(value: Optional[str]) -> None:
+        txt = normalize_spaces(value or "")
+        if not txt:
+            return
+        key = txt.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(txt)
+
     for selector in (
         ".product-discount-tag",
         ".product-note-tag",
@@ -251,16 +265,15 @@ def parse_promo(article) -> Tuple[Optional[int], bool]:
         "[class*='tag']",
     ):
         for node in article.css(selector):
-            txt = normalize_spaces(node.text(separator=" ", strip=True))
-            if not txt:
-                continue
-            key = txt.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            candidates.append(txt)
+            add_candidate(node.text(separator=" ", strip=True))
+            add_candidate(node.attributes.get("title"))
+            add_candidate(node.attributes.get("aria-label"))
+            for img in node.css("img"):
+                add_candidate(img.attributes.get("alt"))
+                add_candidate(img.attributes.get("title"))
 
     one_plus_one = any(_one_plus_one_re.search(txt) for txt in candidates)
+    two_plus_one = any(_two_plus_one_re.search(txt) for txt in candidates)
 
     discount_percent = None
     for txt in candidates:
@@ -273,7 +286,23 @@ def parse_promo(article) -> Tuple[Optional[int], bool]:
             except ValueError:
                 pass
 
-    return discount_percent, one_plus_one
+    promo_text = None
+    for txt in candidates:
+        low = normalize_text_no_accents(txt)
+        is_web_only = ("web" in low and "only" in low) or "web-only" in low or "μονο στο web" in low
+        if (
+            "%" in txt
+            or is_web_only
+            or "online" in low
+            or bool(_one_plus_one_re.search(txt))
+            or bool(_two_plus_one_re.search(txt))
+        ):
+            promo_text = txt
+            break
+    if promo_text is None and candidates:
+        promo_text = candidates[0]
+
+    return discount_percent, one_plus_one, two_plus_one, promo_text
 
 
 def parse_product_url(article) -> Optional[str]:
@@ -406,7 +435,7 @@ def parse_listing_article(
 
     url = parse_product_url(article)
     sku = parse_sku(article)
-    discount_percent, one_plus_one = parse_promo(article)
+    discount_percent, one_plus_one, two_plus_one, promo_text = parse_promo(article)
 
     (
         final_price,
@@ -441,7 +470,8 @@ def parse_listing_article(
             and original_set_price > final_set_price
         )
     )
-    offer = discount_percent is not None or has_price_discount
+    offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
+    unit_of_measure = unit_of_measure or "piece"
 
     row = ListingProductRow(
         url=url,
@@ -458,6 +488,8 @@ def parse_listing_article(
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
+        two_plus_one=two_plus_one,
+        promo_text=promo_text,
         image_url=parse_image_url(article),
         root_category=root_category,
     )

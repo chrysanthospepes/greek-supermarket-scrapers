@@ -138,7 +138,7 @@ def detect_unit_of_measure(label: str) -> Optional[str]:
             "each",
         )
     ):
-        return "pieces"
+        return "piece"
     return None
 
 
@@ -592,6 +592,7 @@ def parse_listing_article(
     )
 
     offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
+    unit_of_measure = unit_of_measure or "piece"
 
     brand = analytics_item.get("item_brand")
     if brand is not None:
@@ -749,10 +750,6 @@ def crawl_category_listing(
 
 
 def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
-    if not rows:
-        print("No rows to save.")
-        return
-
     fieldnames = [field.name for field in fields(ListingProductRow)]
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

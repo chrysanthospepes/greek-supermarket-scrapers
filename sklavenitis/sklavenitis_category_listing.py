@@ -3,7 +3,7 @@ import html
 import json
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -28,6 +28,7 @@ HEADERS = {
 }
 
 _gift_offer_re = re.compile(r"(\d+)\s*\+\s*(\d+)")
+_two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _current_total_re = re.compile(r"(\d+)\s+.+?\s+(\d+)\s+.+", re.IGNORECASE)
 
@@ -52,6 +53,7 @@ class ListingProductRow:
     original_set_price: Optional[float] = None
 
     discount_percent: Optional[int] = None
+    two_plus_one: bool = False
     promo_text: Optional[str] = None
     gift_buy_qty: Optional[int] = None
     gift_free_qty: Optional[int] = None
@@ -270,7 +272,7 @@ def parse_main_prices(article, analytics_price: Optional[float]) -> Tuple[Option
     return final_price, original_price
 
 
-def parse_promo(article) -> Tuple[Optional[str], Optional[int], Optional[int], Optional[int]]:
+def parse_promo(article) -> Tuple[Optional[str], Optional[int], Optional[int], Optional[int], bool]:
     candidates: List[str] = []
     seen: Set[str] = set()
 
@@ -329,16 +331,20 @@ def parse_promo(article) -> Tuple[Optional[str], Optional[int], Optional[int], O
 
     buy_qty = None
     free_qty = None
+    two_plus_one = False
     if promo_text:
         m = _gift_offer_re.search(promo_text)
         if m:
             try:
                 buy_qty = int(m.group(1))
                 free_qty = int(m.group(2))
+                two_plus_one = buy_qty == 2 and free_qty == 1
             except ValueError:
                 pass
+        if _two_plus_one_re.search(promo_text):
+            two_plus_one = True
 
-    return promo_text, discount_percent, buy_qty, free_qty
+    return promo_text, discount_percent, buy_qty, free_qty, two_plus_one
 
 
 def parse_listing_article(article, root_slug: str, page: int, page_url: str) -> Optional[ListingProductRow]:
@@ -359,7 +365,7 @@ def parse_listing_article(article, root_slug: str, page: int, page_url: str) -> 
 
     unit_price, unit_price_unit = parse_unit_price(article)
     final_price, original_price = parse_main_prices(article, analytics_price=analytics_price)
-    promo_text, discount_percent, gift_buy_qty, gift_free_qty = parse_promo(article)
+    promo_text, discount_percent, gift_buy_qty, gift_free_qty, two_plus_one = parse_promo(article)
 
     # Fallback discount if list price data is available but no explicit percentage text.
     if discount_percent is None and final_price and original_price and original_price > final_price:
@@ -401,6 +407,7 @@ def parse_listing_article(article, root_slug: str, page: int, page_url: str) -> 
         final_set_price=None,
         original_set_price=None,
         discount_percent=discount_percent,
+        two_plus_one=two_plus_one,
         promo_text=promo_text,
         gift_buy_qty=gift_buy_qty,
         gift_free_qty=gift_free_qty,
@@ -520,16 +527,11 @@ def crawl_category_listing(root_listing: str, root_slug: str, max_pages: int = 5
 
 
 def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
-    if not rows:
-        print("No rows to save.")
-        return
-
-    fieldnames = list(asdict(rows[0]).keys())
+    fieldnames = [field.name for field in fields(ListingProductRow)]
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for row in rows:
-            writer.writerow(asdict(row))
+        writer.writerows(asdict(row) for row in rows)
 
     print(f"Saved {len(rows)} rows to {filename}")
 
