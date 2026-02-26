@@ -125,6 +125,20 @@ def detect_unit_of_measure(label: str) -> Optional[str]:
         return "kilos"
     if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο", "/lt", "/l")):
         return "liters"
+    if any(
+        token in low
+        for token in (
+            "τεμαχ",
+            "τεμ",
+            "τμχ",
+            "/pc",
+            "pcs",
+            "piece",
+            "/ea",
+            "each",
+        )
+    ):
+        return "pieces"
     return None
 
 
