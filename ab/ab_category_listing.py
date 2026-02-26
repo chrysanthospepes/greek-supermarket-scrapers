@@ -75,6 +75,7 @@ class ListingProductRow:
     discount_percent: Optional[int] = None
     offer: bool = False
     one_plus_one: bool = False
+    promo_text: Optional[str] = None
 
     image_url: Optional[str] = None
 
@@ -387,6 +388,14 @@ def parse_one_plus_one(article) -> bool:
     return bool(_one_plus_one_re.search(txt))
 
 
+def parse_promo_text(article) -> Optional[str]:
+    promo_node = article.css_first("[data-testid='tag-promo-label']")
+    if not promo_node:
+        return None
+    txt = normalize_spaces(promo_node.text(separator=" ", strip=True))
+    return txt or None
+
+
 def parse_listing_article(article, root_category: str) -> Optional[ListingProductRow]:
     name = parse_name(article)
     url = parse_product_url(article)
@@ -401,6 +410,7 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
 
     discount_percent = parse_discount_percent(article)
     one_plus_one = parse_one_plus_one(article)
+    promo_text = parse_promo_text(article)
 
     if discount_percent is None:
         if final_price and original_price and original_price > final_price:
@@ -425,6 +435,8 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
     )
 
     offer = one_plus_one or discount_percent is not None or has_price_discount
+    if discount_percent is not None:
+        promo_text = None
 
     row = ListingProductRow(
         url=url,
@@ -441,6 +453,7 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
+        promo_text=promo_text,
         image_url=parse_image_url(article),
         root_category=root_category,
     )
@@ -487,7 +500,7 @@ def parse_api_image_url(images: Any) -> Optional[str]:
     return normalize(urljoin(BASE, best_url))
 
 
-def parse_promotions_info(product: Dict[str, Any]) -> Tuple[Optional[int], bool, bool]:
+def parse_promotions_info(product: Dict[str, Any]) -> Tuple[Optional[int], bool, bool, Optional[str]]:
     promotions: List[Dict[str, Any]] = []
     for key in ("potentialPromotions", "potentialActivatablePromotions"):
         values = product.get(key)
@@ -496,6 +509,7 @@ def parse_promotions_info(product: Dict[str, Any]) -> Tuple[Optional[int], bool,
 
     discount_percent: Optional[int] = None
     one_plus_one = False
+    promo_text: Optional[str] = None
 
     for promo in promotions:
         pct = promo.get("percentageDiscount")
@@ -507,10 +521,15 @@ def parse_promotions_info(product: Dict[str, Any]) -> Tuple[Optional[int], bool,
             normalize_spaces(str(promo.get("description") or "")),
             normalize_spaces(str(promo.get("simplePromotionMessage") or "")),
         ]
+        if promo_text is None:
+            for txt in texts:
+                if txt:
+                    promo_text = txt
+                    break
         if any(_one_plus_one_re.search(txt) for txt in texts if txt):
             one_plus_one = True
 
-    return discount_percent, one_plus_one, bool(promotions)
+    return discount_percent, one_plus_one, bool(promotions), promo_text
 
 
 def parse_api_listing_product(
@@ -583,7 +602,7 @@ def parse_api_listing_product(
     ).strip()
     unit_of_measure = detect_unit_of_measure_from_code(price.get("unitCode"), unit_label)
 
-    discount_percent, one_plus_one, has_promotions = parse_promotions_info(product)
+    discount_percent, one_plus_one, has_promotions, promo_text = parse_promotions_info(product)
     if discount_percent is None and final_price and original_price and original_price > final_price:
         discount_percent = int(round(((original_price - final_price) / original_price) * 100))
     if (
@@ -606,6 +625,8 @@ def parse_api_listing_product(
         and original_unit_price > final_unit_price
     )
     offer = one_plus_one or discount_percent is not None or has_price_discount or has_promotions
+    if discount_percent is not None:
+        promo_text = None
 
     row = ListingProductRow(
         url=product_url,
@@ -622,6 +643,7 @@ def parse_api_listing_product(
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
+        promo_text=promo_text,
         image_url=parse_api_image_url(product.get("images")),
         root_category=root_category,
     )
