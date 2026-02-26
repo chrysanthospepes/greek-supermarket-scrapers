@@ -11,7 +11,7 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.ab.gr"
 ROOT_CATEGORIES = [
-    # "el/eshop/Oporopoleio/c/001",
+    "el/eshop/Oporopoleio/c/001",
     # "el/eshop/Fresko-Kreas-and-Psaria/c/002",
     # "el/eshop/Galaktokomika-Fytika-Rofimata-and-Eidi-Psygeioy/c/003",
     # "el/eshop/Tyria-Fytika-Anapliromata-and-Allantika/c/004",
@@ -19,7 +19,7 @@ ROOT_CATEGORIES = [
     # "el/eshop/Artos-Zacharoplasteio/c/006",
     # "el/eshop/Etoima-Geymata/c/007",
     # "el/eshop/Kava-anapsyktika-nera-xiroi-karpoi/c/008",
-    "el/eshop/Proino-snacking-and-rofimata/c/009",
+    # "el/eshop/Proino-snacking-and-rofimata/c/009",
     # "el/eshop/Vasika-typopoiimena-trofima/c/010",
     # "el/eshop/Ola-gia-to-moro/c/011",
     # "el/eshop/Eidi-prosopikis-peripoiisis/c/012",
@@ -95,10 +95,56 @@ def normalize_text_no_accents(text: str) -> str:
 
 def detect_unit_of_measure(label: str) -> Optional[str]:
     low = normalize_text_no_accents(label)
-    if any(token in low for token in ("/κιλ", "κιλο", "κιλου", "κιλα", "/kg")):
+    if any(
+        token in low
+        for token in (
+            "/κιλ",
+            "ανα κιλ",
+            "ανά κιλ",
+            "κιλο",
+            "κιλου",
+            "κιλα",
+            "/kg",
+            " kg",
+            "kilogram",
+        )
+    ):
         return "kilos"
-    if any(token in low for token in ("/λιτ", "λιτρο", "λιτρου", "λιτρα", "/lt", "/l")):
+    if any(
+        token in low
+        for token in (
+            "/λιτ",
+            "ανα λιτ",
+            "ανά λιτ",
+            "λιτρο",
+            "λιτρου",
+            "λιτρα",
+            "/lt",
+            "/l",
+            " liter",
+            " litre",
+        )
+    ):
         return "liters"
+    if any(
+        token in low
+        for token in (
+            "/τεμ",
+            "ανα τεμ",
+            "ανά τεμ",
+            "τεμαχ",
+            "/τμχ",
+            "τμχ",
+            "/tmx",
+            " piece",
+            " pieces",
+            " pc",
+            " pcs",
+            "/ea",
+            " each",
+        )
+    ):
+        return "pieces"
     return None
 
 
@@ -341,17 +387,25 @@ def parse_discount_percent(article) -> Optional[int]:
 def parse_unit_prices(article) -> Tuple[Optional[float], Optional[float], Optional[str]]:
     unit_node = article.css_first("[data-testid='product-block-price-per-unit']")
     old_unit_node = article.css_first("[data-testid='product-block-old-ppu']")
+    supplementary_node = article.css_first("[data-testid='product-block-supplementary-price']")
 
     final_unit = parse_price_node(unit_node)
     original_unit = parse_price_number(
         old_unit_node.text(separator=" ", strip=True) if old_unit_node else ""
     )
 
-    unit_label = ""
-    if unit_node:
-        unit_label = normalize_spaces(unit_node.text(separator=" ", strip=True))
-        if not unit_label:
-            unit_label = normalize_spaces(unit_node.attributes.get("aria-label") or "")
+    unit_label_parts: List[str] = []
+    for node in (unit_node, supplementary_node):
+        if node is None:
+            continue
+        txt = normalize_spaces(node.text(separator=" ", strip=True))
+        aria = normalize_spaces(node.attributes.get("aria-label") or "")
+        if txt:
+            unit_label_parts.append(txt)
+        if aria:
+            unit_label_parts.append(aria)
+
+    unit_label = " ".join(unit_label_parts).strip()
     unit_of_measure = detect_unit_of_measure(unit_label)
 
     if (
@@ -476,11 +530,13 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
 
 
 def detect_unit_of_measure_from_code(unit_code: Optional[str], label: str = "") -> Optional[str]:
-    code = normalize_spaces((unit_code or "").lower())
-    if code in {"kilogram", "kg"}:
+    code = normalize_text_no_accents(normalize_spaces(str(unit_code or "")))
+    if code in {"kilogram", "kg", "kilo", "kgr"}:
         return "kilos"
-    if code in {"liter", "litre", "l"}:
+    if code in {"liter", "litre", "l", "lt"}:
         return "liters"
+    if code in {"piece", "pieces", "pc", "pcs", "ea", "each", "item", "τεμ", "τμχ", "tmx"}:
+        return "pieces"
     return detect_unit_of_measure(label)
 
 
@@ -578,9 +634,17 @@ def parse_api_listing_product(
     if final_price is not None and original_price is not None and original_price <= final_price + 1e-9:
         original_price = None
 
-    supplementary_unit_price = parse_price_number(str(price.get("supplementaryPriceLabel1") or ""))
-    discounted_unit_price = parse_price_number(str(price.get("discountedUnitPriceFormatted") or ""))
-    unit_price_formatted = parse_price_number(str(price.get("unitPriceFormatted") or ""))
+    supplementary_price_label1 = normalize_spaces(str(price.get("supplementaryPriceLabel1") or ""))
+    supplementary_price_label2 = normalize_spaces(str(price.get("supplementaryPriceLabel2") or ""))
+    discounted_unit_price_formatted = normalize_spaces(
+        str(price.get("discountedUnitPriceFormatted") or "")
+    )
+    unit_price_formatted_label = normalize_spaces(str(price.get("unitPriceFormatted") or ""))
+    unit_label_code = normalize_spaces(str(price.get("unit") or ""))
+
+    supplementary_unit_price = parse_price_number(supplementary_price_label1)
+    discounted_unit_price = parse_price_number(discounted_unit_price_formatted)
+    unit_price_formatted = parse_price_number(unit_price_formatted_label)
 
     if show_strikethrough:
         final_unit_price = discounted_unit_price
@@ -613,8 +677,11 @@ def parse_api_listing_product(
 
     unit_label = " ".join(
         [
-            normalize_spaces(str(price.get("supplementaryPriceLabel1") or "")),
-            normalize_spaces(str(price.get("supplementaryPriceLabel2") or "")),
+            supplementary_price_label1,
+            supplementary_price_label2,
+            discounted_unit_price_formatted,
+            unit_price_formatted_label,
+            unit_label_code,
         ]
     ).strip()
     unit_of_measure = detect_unit_of_measure_from_code(price.get("unitCode"), unit_label)
