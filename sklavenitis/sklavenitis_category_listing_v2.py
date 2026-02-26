@@ -76,6 +76,7 @@ PROMO_SELECTORS = (
 _spaces_re = re.compile(r"\s+")
 _non_price_chars_re = re.compile(r"[^0-9,.\-]")
 _one_plus_one_re = re.compile(r"\b1\s*\+\s*1\b")
+_two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&](?:pg|page)=(\d+)", re.IGNORECASE)
 _price_before_currency_re = re.compile(r"([0-9][0-9\.,]*)\s*(?:€|EUR)", re.IGNORECASE)
@@ -99,6 +100,8 @@ class ListingProductRow:
     discount_percent: Optional[int] = None
     offer: bool = False
     one_plus_one: bool = False
+    two_plus_one: bool = False
+    promo_text: Optional[str] = None
 
     image_url: Optional[str] = None
 
@@ -318,7 +321,7 @@ def parse_sku(analytics_item: Dict[str, Any], product_meta: Dict[str, Any]) -> O
     return None
 
 
-def parse_promo(article) -> Tuple[Optional[int], bool]:
+def parse_promo(article) -> Tuple[Optional[int], bool, bool, Optional[str]]:
     candidates: List[str] = []
     seen: Set[str] = set()
 
@@ -342,6 +345,7 @@ def parse_promo(article) -> Tuple[Optional[int], bool]:
                 add_candidate(img.attributes.get("title"))
 
     one_plus_one = any(_one_plus_one_re.search(txt) for txt in candidates)
+    two_plus_one = any(_two_plus_one_re.search(txt) for txt in candidates)
 
     discount_percent = None
     for txt in candidates:
@@ -353,7 +357,11 @@ def parse_promo(article) -> Tuple[Optional[int], bool]:
             except ValueError:
                 pass
 
-    return discount_percent, one_plus_one
+    promo_text = candidates[0] if candidates else None
+    if discount_percent is not None or one_plus_one or two_plus_one:
+        promo_text = None
+
+    return discount_percent, one_plus_one, two_plus_one, promo_text
 
 
 def parse_product_url(article) -> Optional[str]:
@@ -525,7 +533,7 @@ def parse_listing_article(
     name = parse_name(article, analytics_item=analytics_item)
     url = parse_product_url(article)
     sku = parse_sku(analytics_item=analytics_item, product_meta=product_meta)
-    discount_percent, one_plus_one = parse_promo(article)
+    discount_percent, one_plus_one, two_plus_one, promo_text = parse_promo(article)
 
     main_price_block = article.css_first(".priceWrp .main-price")
     final_unit_price, original_unit_price, unit_of_measure = parse_unit_prices(
@@ -569,7 +577,7 @@ def parse_listing_article(
         and original_unit_price > final_unit_price
     )
 
-    offer = one_plus_one or discount_percent is not None or has_price_discount
+    offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
 
     brand = analytics_item.get("item_brand")
     if brand is not None:
@@ -593,6 +601,8 @@ def parse_listing_article(
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
+        two_plus_one=two_plus_one,
+        promo_text=promo_text,
         image_url=parse_image_url(article),
         root_category=root_category,
     )
