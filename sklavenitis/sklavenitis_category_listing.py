@@ -3,7 +3,9 @@ import html
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, fields
+import unicodedata
+from dataclasses import dataclass, fields
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -12,75 +14,163 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.sklavenitis.gr"
 ROOT_CATEGORIES = [
-    "eidi-artozacharoplasteioy",
-    # "freska-kai-psychomena",
-    # "kreas-poulerika-kynigi",
-    # "galaktokomika-tyria",
+    # "eidi-artozacharoplasteioy",
+    "freska-froyta-lachanika",
+    # "fresko-psari-thalassina",
+    # "fresko-kreas",
+    # "galata-rofimata-chymoi-psygeioy",
+    # "giaoyrtia-kremes-galaktos-epidorpia-psygeioy",
+    # "turokomika-futika-anapliromata",
+    # "ayga-voytyro-nopes-zymes-zomoi",
+    # "allantika",
+    # "orektika-delicatessen",
+    # "etoima-geymata",
+    # "katepsygmena",
+    # "kava",
+    # "anapsyktika-nera-chymoi",
+    # "xiroi-karpoi-snak",
+    # "mpiskota-sokolates-zacharodi",
+    # "eidi-proinoy-rofimata",
+    # "vrefikes-paidikes-trofes",
+    # "trofima-pantopoleioy",
+    # "trofes-eidi-gia-katoikidia",
+    # "eidi-mias-chrisis-eidi-parti",
+    # "chartika-panes-servietes",
+    # "kallyntika-eidi-prosopikis-ygieinis",
+    # "aporrypantika-eidi-katharismoy",
+    # "eidi-oikiakis-chrisis",
+    # "chartopoleio",
 ]
 MAX_PAGES_PER_CATEGORY = 500
-PAGE_SLEEP_SECONDS = 0.3
+PAGE_SLEEP_SECONDS = 0.1
 # True: deterministic sort before CSV write. False: keep parser discovery order.
 SORT_PRODUCTS_FOR_CSV = True
+REQUEST_RETRY_ATTEMPTS = 3
+REQUEST_RETRY_BACKOFF_SECONDS = 1.0
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "el-GR,el;q=0.9,en;q=0.8",
 }
 
-_gift_offer_re = re.compile(r"(\d+)\s*\+\s*(\d+)")
+BASE_NETLOC = urlparse(BASE).netloc
+PROMO_SELECTORS = (
+    ".sign-badges .badge",
+    ".offer-span",
+    ".product-discount-tag",
+    ".product-note-tag",
+    ".product-label",
+    ".product-tag",
+    ".product-badge",
+    ".product-flags_figure",
+    ".sign-new_figure",
+    "[class*='offer']",
+    "[class*='discount']",
+    "[class*='promo']",
+    "[class*='badge']",
+    "[class*='tag']",
+    "[class*='flag']",
+    "[class*='sign']",
+)
+_spaces_re = re.compile(r"\s+")
+_non_price_chars_re = re.compile(r"[^0-9,.\-]")
+_one_plus_one_re = re.compile(r"\b1\s*\+\s*1\b")
 _two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
-_current_total_re = re.compile(r"(\d+)\s+.+?\s+(\d+)\s+.+", re.IGNORECASE)
+_page_param_re = re.compile(r"[?&](?:pg|page)=(\d+)", re.IGNORECASE)
+_price_before_currency_re = re.compile(r"([0-9][0-9\.,]*)\s*(?:€|EUR)", re.IGNORECASE)
 
 
 @dataclass
 class ListingProductRow:
     url: Optional[str] = None
     name: Optional[str] = None
-    code: Optional[str] = None
-    analytics_id: Optional[str] = None
-    variant_id: Optional[str] = None
+    sku: Optional[str] = None
     brand: Optional[str] = None
 
     final_price: Optional[float] = None
-    currency: Optional[str] = None
-    unit_price: Optional[float] = None
-    unit_price_unit: Optional[str] = None
+    final_unit_price: Optional[float] = None
     original_price: Optional[float] = None
     original_unit_price: Optional[float] = None
-    original_unit_price_unit: Optional[str] = None
+    unit_of_measure: Optional[str] = None
     final_set_price: Optional[float] = None
     original_set_price: Optional[float] = None
 
     discount_percent: Optional[int] = None
+    offer: bool = False
+    one_plus_one: bool = False
     two_plus_one: bool = False
     promo_text: Optional[str] = None
-    gift_buy_qty: Optional[int] = None
-    gift_free_qty: Optional[int] = None
 
     image_url: Optional[str] = None
 
-    analytics_category: Optional[str] = None
-    analytics_category2: Optional[str] = None
-    analytics_category3: Optional[str] = None
-    root_category_slug: Optional[str] = None
     root_category: Optional[str] = None
-
-    listing_page: Optional[int] = None
-    listing_page_url: Optional[str] = None
 
 
 def normalize_spaces(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").replace("\xa0", " ")).strip()
+    return _spaces_re.sub(" ", (text or "").replace("\xa0", " ")).strip()
+
+
+@lru_cache(maxsize=512)
+def normalize_text_no_accents(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", normalize_spaces(text).lower())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+@lru_cache(maxsize=512)
+def detect_unit_of_measure(label: str) -> Optional[str]:
+    low = normalize_text_no_accents(label)
+    if any(token in low for token in ("κιλου", "κιλα", "κιλο", "/kg")):
+        return "kilos"
+    if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο", "/lt", "/l")):
+        return "liters"
+    if any(
+        token in low
+        for token in (
+            "τεμαχ",
+            "τεμ",
+            "τμχ",
+            "/pc",
+            "pcs",
+            "piece",
+            "/ea",
+            "each",
+        )
+    ):
+        return "piece"
+    return None
 
 
 def same_site(url: str) -> bool:
-    return urlparse(url).netloc == urlparse(BASE).netloc
+    return urlparse(url).netloc == BASE_NETLOC
 
 
-def normalize_url(url: str) -> str:
+def normalize(url: str) -> str:
     parsed = urlparse(url)
     return parsed._replace(fragment="").geturl()
+
+
+def looks_like_product_url(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    if not path or path == "/":
+        return False
+
+    banned_prefixes = (
+        "/sitemap",
+        "/company",
+        "/career",
+        "/contact",
+        "/login",
+        "/register",
+        "/terms",
+        "/privacy",
+        "/payment",
+        "/search",
+        "/cart",
+        "/checkout",
+    )
+    return not any(path.startswith(prefix) for prefix in banned_prefixes)
 
 
 def parse_price_number(text: str) -> Optional[float]:
@@ -90,10 +180,11 @@ def parse_price_number(text: str) -> Optional[float]:
 
     s = s.replace("EUR", "")
     s = s.replace("€", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
+    s = _non_price_chars_re.sub("", s)
     if not s:
         return None
 
+    # Typical Greek format: 1.234,56
     if "," in s:
         s = s.replace(".", "")
         s = s.replace(",", ".")
@@ -104,6 +195,14 @@ def parse_price_number(text: str) -> Optional[float]:
         return float(s)
     except ValueError:
         return None
+
+
+def parse_first_price_before_currency(text: str) -> Optional[float]:
+    for match in _price_before_currency_re.finditer(text or ""):
+        value = parse_price_number(match.group(1))
+        if value is not None:
+            return value
+    return None
 
 
 def to_category_slug(category: str) -> str:
@@ -119,8 +218,7 @@ def to_category_slug(category: str) -> str:
 
 
 def to_category_url(category: str) -> str:
-    slug = to_category_slug(category)
-    return f"{BASE}/{slug}/"
+    return f"{BASE}/{to_category_slug(category)}/"
 
 
 def csv_filename_for_category(category: str) -> str:
@@ -166,11 +264,118 @@ def parse_product_meta(article) -> Dict[str, Any]:
     if sku is not None:
         out["sku"] = str(sku).strip()
 
-    product_id = data_item.get("ProductID")
-    if product_id is not None:
-        out["product_id"] = str(product_id).strip()
-
     return out
+
+
+def extract_pagination_state(
+    tree: HTMLParser,
+    requested_page: int,
+) -> Tuple[Optional[int], Optional[int], bool, Optional[int], Optional[int]]:
+    page_numbers: Set[int] = set()
+    next_page: Optional[int] = None
+    has_next = (
+        tree.css_first("link[rel='next']") is not None
+        or tree.css_first("a[rel='next']") is not None
+    )
+
+    next_node = tree.css_first("section.pagination.go-next")
+    if next_node:
+        raw = (next_node.attributes.get("data-pg") or "").strip()
+        if raw.isdigit():
+            next_page = int(raw)
+            page_numbers.add(next_page)
+            has_next = True
+
+    for a in tree.css("section.pagination a[href], a[rel='next'][href]"):
+        href = (a.attributes.get("href") or "").strip()
+        if href:
+            m = _page_param_re.search(href)
+            if m:
+                try:
+                    page_numbers.add(int(m.group(1)))
+                except ValueError:
+                    pass
+
+        rel = (a.attributes.get("rel") or "").strip().lower()
+        cls = (a.attributes.get("class") or "").strip().lower()
+        if rel == "next" or "next" in cls:
+            has_next = True
+
+    if next_page is None and page_numbers:
+        candidate = min((p for p in page_numbers if p > requested_page), default=None)
+        if candidate is not None:
+            next_page = candidate
+            has_next = True
+
+    max_page = max(page_numbers) if page_numbers else None
+
+    current_count = None
+    total_count = None
+    count_node = tree.css_first("section.pagination .current-page")
+    if count_node:
+        txt = normalize_spaces(count_node.text(separator=" ", strip=True))
+        nums = [int(n) for n in re.findall(r"\d+", txt)]
+        if len(nums) >= 2:
+            current_count = nums[-2]
+            total_count = nums[-1]
+
+    return next_page, max_page, has_next, current_count, total_count
+
+
+def parse_sku(analytics_item: Dict[str, Any], product_meta: Dict[str, Any]) -> Optional[str]:
+    sku = product_meta.get("sku")
+    if sku:
+        return str(sku).strip()
+
+    item_id = analytics_item.get("item_id")
+    if item_id is not None:
+        item_id_str = str(item_id).strip()
+        if item_id_str:
+            return item_id_str
+    return None
+
+
+def parse_promo(article) -> Tuple[Optional[int], bool, bool, Optional[str]]:
+    candidates: List[str] = []
+    seen: Set[str] = set()
+
+    def add_candidate(text: Optional[str]) -> None:
+        txt = normalize_spaces(text or "")
+        if not txt:
+            return
+        key = txt.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(txt)
+
+    for selector in PROMO_SELECTORS:
+        for node in article.css(selector):
+            add_candidate(node.text(separator=" ", strip=True))
+            add_candidate(node.attributes.get("title"))
+            add_candidate(node.attributes.get("aria-label"))
+            for img in node.css("img"):
+                add_candidate(img.attributes.get("alt"))
+                add_candidate(img.attributes.get("title"))
+
+    one_plus_one = any(_one_plus_one_re.search(txt) for txt in candidates)
+    two_plus_one = any(_two_plus_one_re.search(txt) for txt in candidates)
+
+    discount_percent = None
+    for txt in candidates:
+        m = _discount_re.search(txt)
+        if m:
+            try:
+                discount_percent = abs(int(m.group(1).replace(" ", "")))
+                break
+            except ValueError:
+                pass
+
+    promo_text = candidates[0] if candidates else None
+    if discount_percent is not None or one_plus_one or two_plus_one:
+        promo_text = None
+
+    return discount_percent, one_plus_one, two_plus_one, promo_text
 
 
 def parse_product_url(article) -> Optional[str]:
@@ -178,16 +383,16 @@ def parse_product_url(article) -> Optional[str]:
     if abs_link:
         href = (abs_link.attributes.get("href") or "").strip()
         if href:
-            url = normalize_url(urljoin(BASE, href))
-            if same_site(url):
+            url = normalize(urljoin(BASE, href))
+            if same_site(url) and looks_like_product_url(url):
                 return url
 
     for a in article.css("a[href]"):
         href = (a.attributes.get("href") or "").strip()
         if not href:
             continue
-        url = normalize_url(urljoin(BASE, href))
-        if same_site(url):
+        url = normalize(urljoin(BASE, href))
+        if same_site(url) and looks_like_product_url(url):
             return url
     return None
 
@@ -206,155 +411,134 @@ def parse_name(article, analytics_item: Dict[str, Any]) -> Optional[str]:
 
 
 def parse_image_url(article) -> Optional[str]:
-    node = article.css_first("figure.product__figure img[src]")
+    node = article.css_first("figure.product__figure img")
+    if not node:
+        node = article.css_first("img[src]") or article.css_first("img[data-src]")
     if not node:
         return None
-    src = (node.attributes.get("src") or "").strip()
+
+    src = (
+        (node.attributes.get("src") or "").strip()
+        or (node.attributes.get("data-src") or "").strip()
+    )
     if not src:
         return None
-    return normalize_url(urljoin(BASE, src))
+    return normalize(urljoin(BASE, src))
 
 
-def parse_unit_price(article) -> Tuple[Optional[float], Optional[str]]:
-    node = article.css_first(".priceWrp .priceKil")
-    if not node:
-        return None, None
+def parse_unit_prices(article, main_price_block=None) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    def parse_unit_block(block) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+        if block is None:
+            return None, None, None
 
-    full = normalize_spaces(node.text(separator=" ", strip=True))
-    value = parse_price_number(full)
+        unit_label = None
+        for span in block.css("span"):
+            txt = normalize_spaces(span.text(separator=" ", strip=True))
+            if "/" in txt:
+                unit_label = txt
+                break
 
-    unit = None
-    span = node.css_first("span")
-    if span:
-        unit = normalize_spaces(span.text(separator=" ", strip=True))
-    if not unit and "/" in full:
-        unit = full.split("/", 1)[1].strip()
-        unit = f"/{unit}" if unit and not unit.startswith("/") else unit
+        original_unit_price = None
+        for node in block.css(".deleted__price"):
+            original_unit_price = parse_price_number(node.text(separator=" ", strip=True))
+            if original_unit_price is not None:
+                break
 
-    return value, unit or None
+        final_unit_price = None
+        for node in block.css(".price"):
+            final_unit_price = parse_price_number(node.text(separator=" ", strip=True))
+            if final_unit_price is not None:
+                break
+
+        if final_unit_price is None:
+            highlight = block.css_first(".hightlight")
+            if highlight:
+                final_unit_price = parse_price_number(highlight.text(separator=" ", strip=True))
+
+        if final_unit_price is None:
+            final_unit_price = parse_first_price_before_currency(block.text(separator=" ", strip=True))
+
+        return final_unit_price, original_unit_price, unit_label
+
+    final_unit_price, original_unit_price, unit_label = parse_unit_block(
+        article.css_first(".priceWrp .priceKil")
+    )
+
+    unit_of_measure = detect_unit_of_measure(unit_label or "")
+
+    # Some cards (especially kilo-only/liter-only) keep unit pricing in main-price.
+    if final_unit_price is None and unit_of_measure is None:
+        main_final, main_original, main_unit_label = parse_unit_block(
+            main_price_block if main_price_block is not None else article.css_first(".priceWrp .main-price")
+        )
+        main_uom = detect_unit_of_measure(main_unit_label or "")
+        if main_uom is not None:
+            final_unit_price = main_final
+            original_unit_price = main_original
+            unit_of_measure = main_uom
+
+    if final_unit_price is None:
+        unit_of_measure = None
+
+    if (
+        original_unit_price is not None
+        and final_unit_price is not None
+        and original_unit_price <= final_unit_price + 1e-9
+    ):
+        original_unit_price = None
+
+    return final_unit_price, original_unit_price, unit_of_measure
 
 
-def parse_main_prices(article, analytics_price: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
-    entries: List[Tuple[float, str]] = []
-    for node in article.css(".priceWrp .main-price .price"):
-        raw = (node.attributes.get("data-price") or "").strip()
-        value = parse_price_number(raw) if raw else None
-        if value is None:
-            value = parse_price_number(node.text(separator=" ", strip=True))
-        if value is None:
-            continue
-
-        parent = node.parent
-        parent_class = ""
-        if parent is not None:
-            parent_class = (parent.attributes.get("class") or "").lower()
-        entries.append((value, parent_class))
-
-    if not entries and analytics_price is None:
-        return None, None
-
-    final_price = analytics_price
-    if final_price is None and entries:
-        preferred = next((v for v, cls in entries if "previous" not in cls), None)
-        final_price = preferred if preferred is not None else entries[0][0]
+def parse_main_prices(main_price_block, analytics_price: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
+    block = main_price_block
+    if not block:
+        return analytics_price, None
 
     original_price = None
-    if final_price is not None and entries:
-        higher = [v for v, _ in entries if v > final_price + 1e-9]
-        if higher:
-            original_price = max(higher)
-    elif len(entries) >= 2:
-        values = sorted({v for v, _ in entries})
-        if len(values) >= 2:
-            final_price = values[0]
-            original_price = values[-1]
+    for node in block.css(".deleted__price"):
+        original_price = parse_price_number(node.text(separator=" ", strip=True))
+        if original_price is not None:
+            break
+
+    final_price = None
+    values: List[float] = []
+    for node in block.css(".price"):
+        value = parse_price_number(node.text(separator=" ", strip=True))
+        if value is None:
+            continue
+        values.append(value)
+        if final_price is None:
+            final_price = value
+
+    if final_price is None:
+        final_price = parse_first_price_before_currency(block.text(separator=" ", strip=True))
+
+    if final_price is None:
+        final_price = analytics_price
+
+    if original_price is None:
+        unique_values = sorted(set(values))
+        if len(unique_values) >= 2:
+            final_price = final_price if final_price is not None else unique_values[0]
+            original_price = unique_values[-1]
+
+    if (
+        original_price is not None
+        and final_price is not None
+        and original_price <= final_price + 1e-9
+    ):
+        original_price = None
 
     return final_price, original_price
 
 
-def parse_promo(article) -> Tuple[Optional[str], Optional[int], Optional[int], Optional[int], bool]:
-    candidates: List[str] = []
-    seen: Set[str] = set()
-
-    def add_candidate(text: Optional[str]) -> None:
-        txt = normalize_spaces(text or "")
-        if not txt:
-            return
-        key = txt.lower()
-        if key in seen:
-            return
-        seen.add(key)
-        candidates.append(txt)
-
-    for selector in (
-        ".product-note-tag",
-        ".product-discount-tag",
-        ".product-label",
-        ".product-tag",
-        ".product-badge",
-        ".product-flags_figure",
-        ".sign-new_figure",
-        "[class*='offer']",
-        "[class*='discount']",
-        "[class*='promo']",
-        "[class*='badge']",
-        "[class*='tag']",
-        "[class*='flag']",
-        "[class*='sign']",
-    ):
-        for node in article.css(selector):
-            add_candidate(node.text(separator=" ", strip=True))
-            add_candidate(node.attributes.get("title"))
-            add_candidate(node.attributes.get("aria-label"))
-            for img in node.css("img"):
-                add_candidate(img.attributes.get("alt"))
-                add_candidate(img.attributes.get("title"))
-
-    promo_text = None
-    for txt in candidates:
-        low = txt.lower()
-        if "%" in txt or "+" in txt or "dor" in low or "δώρ" in low or "δωρ" in low:
-            promo_text = txt
-            break
-    if promo_text is None and candidates:
-        # Keep non-discount badges (e.g. "Νέο", "Vegan") in existing promo_text column.
-        promo_text = candidates[0]
-
-    discount_percent = None
-    if promo_text:
-        m = _discount_re.search(promo_text)
-        if m:
-            try:
-                discount_percent = int(m.group(1).replace(" ", ""))
-            except ValueError:
-                pass
-
-    buy_qty = None
-    free_qty = None
-    two_plus_one = False
-    if promo_text:
-        m = _gift_offer_re.search(promo_text)
-        if m:
-            try:
-                buy_qty = int(m.group(1))
-                free_qty = int(m.group(2))
-                two_plus_one = buy_qty == 2 and free_qty == 1
-            except ValueError:
-                pass
-        if _two_plus_one_re.search(promo_text):
-            two_plus_one = True
-
-    return promo_text, discount_percent, buy_qty, free_qty, two_plus_one
-
-
-def parse_listing_article(article, root_slug: str, page: int, page_url: str) -> Optional[ListingProductRow]:
+def parse_listing_article(
+    article,
+    root_category: str,
+) -> Optional[ListingProductRow]:
     analytics_item = parse_analytics_item(article)
     product_meta = parse_product_meta(article)
-
-    analytics_id = None
-    item_id = analytics_item.get("item_id")
-    if item_id is not None:
-        analytics_id = str(item_id).strip()
 
     analytics_price = None
     if analytics_item.get("price") is not None:
@@ -362,99 +546,123 @@ def parse_listing_article(article, root_slug: str, page: int, page_url: str) -> 
 
     name = parse_name(article, analytics_item=analytics_item)
     url = parse_product_url(article)
+    sku = parse_sku(analytics_item=analytics_item, product_meta=product_meta)
+    discount_percent, one_plus_one, two_plus_one, promo_text = parse_promo(article)
 
-    unit_price, unit_price_unit = parse_unit_price(article)
-    final_price, original_price = parse_main_prices(article, analytics_price=analytics_price)
-    promo_text, discount_percent, gift_buy_qty, gift_free_qty, two_plus_one = parse_promo(article)
+    main_price_block = article.css_first(".priceWrp .main-price")
+    final_unit_price, original_unit_price, unit_of_measure = parse_unit_prices(
+        article,
+        main_price_block=main_price_block,
+    )
+    final_price, original_price = parse_main_prices(
+        main_price_block,
+        analytics_price=analytics_price,
+    )
 
-    # Fallback discount if list price data is available but no explicit percentage text.
-    if discount_percent is None and final_price and original_price and original_price > final_price:
-        discount_percent = int(round(((original_price - final_price) / original_price) * 100))
+    if final_price is None:
+        final_price = analytics_price
 
-    code = analytics_id or product_meta.get("sku")
-    variant_id = product_meta.get("product_id") or product_meta.get("sku")
+    if (
+        final_unit_price is None
+        and original_unit_price is None
+        and final_price is not None
+    ):
+        final_unit_price = final_price
 
-    analytics_category = analytics_item.get("item_category")
-    if analytics_category is not None:
-        analytics_category = normalize_spaces(str(analytics_category))
-    else:
-        analytics_category = None
+    if discount_percent is None:
+        if final_price and original_price and original_price > final_price:
+            discount_percent = int(round(((original_price - final_price) / original_price) * 100))
+        elif (
+            final_unit_price
+            and original_unit_price
+            and original_unit_price > final_unit_price
+        ):
+            discount_percent = int(
+                round(((original_unit_price - final_unit_price) / original_unit_price) * 100)
+            )
 
-    root_category = analytics_item.get("item_list_name")
-    if root_category is not None:
-        root_category = normalize_spaces(str(root_category))
-    if not root_category:
-        root_category = root_slug
+    has_price_discount = (
+        original_price is not None
+        and final_price is not None
+        and original_price > final_price
+    ) or (
+        original_unit_price is not None
+        and final_unit_price is not None
+        and original_unit_price > final_unit_price
+    )
+
+    offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
+    unit_of_measure = unit_of_measure or "piece"
 
     brand = analytics_item.get("item_brand")
     if brand is not None:
         brand = normalize_spaces(html.unescape(str(brand))) or None
 
+    if not url and not name and not sku:
+        return None
+
     row = ListingProductRow(
         url=url,
         name=name,
-        code=code,
-        analytics_id=analytics_id,
-        variant_id=variant_id,
+        sku=sku,
         brand=brand,
         final_price=final_price,
-        currency="EUR",
-        unit_price=unit_price,
-        unit_price_unit=unit_price_unit,
+        final_unit_price=final_unit_price,
         original_price=original_price,
-        original_unit_price=None,
-        original_unit_price_unit=None,
+        original_unit_price=original_unit_price,
+        unit_of_measure=unit_of_measure,
         final_set_price=None,
         original_set_price=None,
         discount_percent=discount_percent,
+        offer=offer,
+        one_plus_one=one_plus_one,
         two_plus_one=two_plus_one,
         promo_text=promo_text,
-        gift_buy_qty=gift_buy_qty,
-        gift_free_qty=gift_free_qty,
         image_url=parse_image_url(article),
-        analytics_category=analytics_category,
-        analytics_category2=None,
-        analytics_category3=None,
-        root_category_slug=root_slug,
         root_category=root_category,
-        listing_page=page,
-        listing_page_url=page_url,
     )
 
-    if not row.url and not row.name and not row.code:
-        return None
     return row
 
 
-def extract_next_page_info(t: HTMLParser) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-    """
-    Returns:
-    - next page number if pagination marker exists
-    - current displayed product count (from text like '24 ... 282 ...')
-    - total products
-    """
-    next_page = None
-    current_count = None
-    total_count = None
+def fetch_listing_page(client: httpx.Client, url: str, page: int) -> httpx.Response:
+    last_error: Optional[Exception] = None
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        try:
+            response = client.get(url)
+        except httpx.RequestError as exc:
+            last_error = exc
+            if attempt >= REQUEST_RETRY_ATTEMPTS:
+                raise
 
-    pg_node = t.css_first("section.pagination.go-next")
-    if pg_node:
-        raw = (pg_node.attributes.get("data-pg") or "").strip()
-        if raw.isdigit():
-            next_page = int(raw)
+            wait_seconds = REQUEST_RETRY_BACKOFF_SECONDS * attempt
+            print(
+                f"page={page} -> request error ({exc}), "
+                f"retrying in {wait_seconds:.1f}s "
+                f"({attempt}/{REQUEST_RETRY_ATTEMPTS})."
+            )
+            time.sleep(wait_seconds)
+            continue
 
-    count_node = t.css_first("section.pagination .current-page")
-    if count_node:
-        txt = normalize_spaces(count_node.text(separator=" ", strip=True))
-        m = _current_total_re.search(txt)
-        if m:
-            try:
-                current_count = int(m.group(1))
-                total_count = int(m.group(2))
-            except ValueError:
-                pass
+        if response.status_code == 404:
+            return response
 
-    return next_page, current_count, total_count
+        if response.status_code in RETRYABLE_STATUS_CODES and attempt < REQUEST_RETRY_ATTEMPTS:
+            wait_seconds = REQUEST_RETRY_BACKOFF_SECONDS * attempt
+            print(
+                f"page={page} -> status={response.status_code}, "
+                f"retrying in {wait_seconds:.1f}s "
+                f"({attempt}/{REQUEST_RETRY_ATTEMPTS})."
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        response.raise_for_status()
+        return response
+
+    if last_error is not None:
+        raise RuntimeError(f"page={page} -> exhausted retries") from last_error
+    raise RuntimeError(f"page={page} -> exhausted retries")
 
 
 def build_page_url(root_listing: str, page: int) -> str:
@@ -464,8 +672,12 @@ def build_page_url(root_listing: str, page: int) -> str:
     return f"{root_listing}{sep}pg={page}"
 
 
-def crawl_category_listing(root_listing: str, root_slug: str, max_pages: int = 500) -> List[ListingProductRow]:
-    root_listing = normalize_url(root_listing.rstrip("/") + "/")
+def crawl_category_listing(
+    root_listing: str,
+    root_category: str,
+    max_pages: int = 500,
+) -> List[ListingProductRow]:
+    root_listing = normalize(root_listing.rstrip("/") + "/")
     rows: List[ListingProductRow] = []
     seen_keys: Set[str] = set()
 
@@ -473,7 +685,7 @@ def crawl_category_listing(root_listing: str, root_slug: str, max_pages: int = 5
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
         while page <= max_pages:
             url = build_page_url(root_listing, page)
-            response = client.get(url)
+            response = fetch_listing_page(client=client, url=url, page=page)
 
             if response.status_code == 404:
                 print(f"page={page} -> 404, stopping pagination.")
@@ -482,19 +694,26 @@ def crawl_category_listing(root_listing: str, root_slug: str, max_pages: int = 5
             response.raise_for_status()
             html_text = response.text
             t = HTMLParser(html_text)
+            next_page, max_page, has_next, current_count, total_count = extract_pagination_state(
+                tree=t,
+                requested_page=page,
+            )
 
             articles = t.css("section.productList div[data-plugin-product]")
+            if not articles:
+                articles = t.css("div[data-plugin-product]")
             if not articles:
                 print(f"page={page} -> 0 products, stopping.")
                 break
 
             added = 0
             for article in articles:
-                row = parse_listing_article(article, root_slug=root_slug, page=page, page_url=url)
+                row = parse_listing_article(article, root_category=root_category)
                 if not row:
                     continue
 
-                key = row.url or f"{row.analytics_id or ''}|{row.code or ''}|{row.name or ''}"
+                # URL is the best dedupe key; fallback to sku/name identity.
+                key = row.url or f"{row.sku or ''}|{row.name or ''}"
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
@@ -502,19 +721,23 @@ def crawl_category_listing(root_listing: str, root_slug: str, max_pages: int = 5
                 rows.append(row)
                 added += 1
 
-            next_page, current_count, total_count = extract_next_page_info(t)
             count_part = ""
             if current_count is not None and total_count is not None:
                 count_part = f" current={current_count}/{total_count}"
             print(f"page={page} +{added} total={len(rows)} cards={len(articles)}{count_part}")
 
             if added == 0:
-                print(f"page={page} -> 0 NEW unique products, stopping.")
+                print(f"page={page} -> 0 NEW unique products, continuing.")
+
+            if max_page is not None and page >= max_page:
+                print(f"page={page} -> reached max_page={max_page}, stopping.")
                 break
 
             if next_page is None:
-                print(f"page={page} -> no next page marker, stopping.")
-                break
+                if not has_next:
+                    print(f"page={page} -> no next page marker, stopping.")
+                    break
+                next_page = page + 1
 
             if next_page <= page:
                 print(f"page={page} -> invalid next page ({next_page}), stopping.")
@@ -531,7 +754,7 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(asdict(row) for row in rows)
+        writer.writerows(row.__dict__ for row in rows)
 
     print(f"Saved {len(rows)} rows to {filename}")
 
@@ -549,12 +772,12 @@ if __name__ == "__main__":
 
         rows = crawl_category_listing(
             root_listing=root_listing,
-            root_slug=root_slug,
+            root_category=root_slug,
             max_pages=MAX_PAGES_PER_CATEGORY,
         )
         print(f"parsed from listings under {root_slug}: {len(rows)}")
 
         if SORT_PRODUCTS_FOR_CSV:
-            rows.sort(key=lambda row: ((row.url or "").lower(), row.code or "", row.name or ""))
+            rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
 
         save_to_csv(rows, csv_filename_for_category(root_slug))
