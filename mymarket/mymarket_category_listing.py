@@ -24,8 +24,8 @@ ROOT_CATEGORIES = [
     # "trofima",
     # "frontida-gia-to-moro-sas",
     # "prosopiki-frontida",
-    # "oikiaki-frontida-chartika",
-    "kouzina-mikrosyskeves-spiti",
+    "oikiaki-frontida-chartika",
+    # "kouzina-mikrosyskeves-spiti",
     # "frontida-gia-to-katoikidio-sas",
     # "epochiaka",
 ]
@@ -85,9 +85,9 @@ def normalize_text_no_accents(text: str) -> str:
 
 def detect_unit_of_measure(label: str) -> Optional[str]:
     low = normalize_text_no_accents(label)
-    if any(token in low for token in ("κιλου", "κιλα", "κιλο")):
+    if any(token in low for token in ("κιλου", "κιλα", "κιλο", "kg", "γρ", "gr", "kilos")):
         return "kilos"
-    if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο")):
+    if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο", "lt", "l", "liters", "ml", "μιλιλιτρα")):
         return "liters"
     if any(
         token in low
