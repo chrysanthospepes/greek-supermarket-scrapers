@@ -47,6 +47,7 @@ _one_plus_one_re = re.compile(r"\b1\s*\+\s*1\b")
 _two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&]page=(\d+)", re.IGNORECASE)
+_max_price_mismatch_ratio = 1.8
 
 
 @dataclass
@@ -150,6 +151,64 @@ def parse_price_number(text: str) -> Optional[float]:
         return None
 
 
+def parse_analytics_price(analytics: Dict[str, Any]) -> Optional[float]:
+    if analytics.get("price") is None:
+        return None
+    value = parse_price_number(str(analytics.get("price")))
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def reconcile_prices(
+    final_price: Optional[float],
+    final_unit_price: Optional[float],
+    original_price: Optional[float],
+    original_unit_price: Optional[float],
+    analytics_price: Optional[float],
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    if final_price is None and analytics_price is not None:
+        final_price = analytics_price
+
+    # Trust analytics only for obvious parsing outliers.
+    if (
+        analytics_price is not None
+        and final_price is not None
+        and original_price is None
+        and analytics_price > 0
+        and final_price > 0
+    ):
+        higher = max(analytics_price, final_price)
+        lower = min(analytics_price, final_price)
+        if higher / lower >= _max_price_mismatch_ratio and (
+            final_unit_price is None or abs(final_unit_price - final_price) <= 1e-9
+        ):
+            final_price = analytics_price
+            final_unit_price = analytics_price
+
+    if (
+        final_price is not None
+        and original_price is not None
+        and original_price <= final_price + 1e-9
+    ):
+        original_price = None
+    if (
+        final_unit_price is not None
+        and original_unit_price is not None
+        and original_unit_price <= final_unit_price + 1e-9
+    ):
+        original_unit_price = None
+
+    if (
+        final_unit_price is None
+        and original_unit_price is None
+        and final_price is not None
+    ):
+        final_unit_price = final_price
+
+    return final_price, final_unit_price, original_price, original_unit_price
+
+
 def to_category_slug(category: str) -> str:
     parsed = urlparse(category)
     if parsed.scheme and parsed.netloc:
@@ -228,12 +287,17 @@ def parse_analytics_payload(article) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def parse_sku(article) -> Optional[str]:
+def parse_sku(article, analytics: Optional[Dict[str, Any]] = None) -> Optional[str]:
     sku = article.css_first(".sku")
     if sku:
         m = _code_re.search(sku.text(separator=" ", strip=True) or "")
         if m:
             return m.group(2)
+
+    if analytics:
+        analytics_id = normalize_spaces(str(analytics.get("id") or ""))
+        if analytics_id:
+            return analytics_id
 
     return None
 
@@ -425,6 +489,7 @@ def parse_listing_article(
     root_category: str,
 ) -> Optional[ListingProductRow]:
     analytics = parse_analytics_payload(article)
+    analytics_price = parse_analytics_price(analytics)
 
     name = normalize_spaces(str(analytics.get("name") or ""))
     if not name:
@@ -434,7 +499,7 @@ def parse_listing_article(
     name = name or None
 
     url = parse_product_url(article)
-    sku = parse_sku(article)
+    sku = parse_sku(article, analytics=analytics)
     discount_percent, one_plus_one, two_plus_one, promo_text = parse_promo(article)
 
     (
@@ -447,15 +512,13 @@ def parse_listing_article(
         original_set_price,
     ) = parse_price_labels(article)
 
-    if final_price is None and analytics.get("price") is not None:
-        final_price = parse_price_number(str(analytics.get("price")))
-
-    if (
-        final_unit_price is None
-        and original_unit_price is None
-        and final_price is not None
-    ):
-        final_unit_price = final_price
+    final_price, final_unit_price, original_price, original_unit_price = reconcile_prices(
+        final_price=final_price,
+        final_unit_price=final_unit_price,
+        original_price=original_price,
+        original_unit_price=original_unit_price,
+        analytics_price=analytics_price,
+    )
 
     has_price_discount = (
         (original_price is not None and final_price is not None and original_price > final_price)
@@ -570,6 +633,14 @@ def crawl_category_listing(
 
             t = HTMLParser(html_text)
             articles = t.css("article.product--teaser")
+            if not articles:
+                articles = t.css("article[data-google-analytics-item-value]")
+                if articles:
+                    print(f"page={page} -> using fallback article selector (analytics payload).")
+            if not articles:
+                articles = t.css("div[data-google-analytics-item-index] article")
+                if articles:
+                    print(f"page={page} -> using fallback article selector (indexed wrapper).")
             if not articles:
                 print(f"page={page} -> 0 products, stopping.")
                 break

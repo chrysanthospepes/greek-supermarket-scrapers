@@ -80,6 +80,7 @@ _two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&](?:pg|page)=(\d+)", re.IGNORECASE)
 _price_before_currency_re = re.compile(r"([0-9][0-9\.,]*)\s*(?:€|EUR)", re.IGNORECASE)
+_max_price_mismatch_ratio = 1.8
 
 
 @dataclass
@@ -203,6 +204,64 @@ def parse_first_price_before_currency(text: str) -> Optional[float]:
         if value is not None:
             return value
     return None
+
+
+def parse_analytics_price(analytics_item: Dict[str, Any]) -> Optional[float]:
+    if analytics_item.get("price") is None:
+        return None
+    value = parse_price_number(str(analytics_item.get("price")))
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def reconcile_prices(
+    final_price: Optional[float],
+    final_unit_price: Optional[float],
+    original_price: Optional[float],
+    original_unit_price: Optional[float],
+    analytics_price: Optional[float],
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    if final_price is None and analytics_price is not None:
+        final_price = analytics_price
+
+    # Trust analytics only for obvious parsing outliers.
+    if (
+        analytics_price is not None
+        and final_price is not None
+        and original_price is None
+        and analytics_price > 0
+        and final_price > 0
+    ):
+        higher = max(analytics_price, final_price)
+        lower = min(analytics_price, final_price)
+        if higher / lower >= _max_price_mismatch_ratio and (
+            final_unit_price is None or abs(final_unit_price - final_price) <= 1e-9
+        ):
+            final_price = analytics_price
+            final_unit_price = analytics_price
+
+    if (
+        final_price is not None
+        and original_price is not None
+        and original_price <= final_price + 1e-9
+    ):
+        original_price = None
+    if (
+        final_unit_price is not None
+        and original_unit_price is not None
+        and original_unit_price <= final_unit_price + 1e-9
+    ):
+        original_unit_price = None
+
+    if (
+        final_unit_price is None
+        and original_unit_price is None
+        and final_price is not None
+    ):
+        final_unit_price = final_price
+
+    return final_price, final_unit_price, original_price, original_unit_price
 
 
 def to_category_slug(category: str) -> str:
@@ -540,9 +599,7 @@ def parse_listing_article(
     analytics_item = parse_analytics_item(article)
     product_meta = parse_product_meta(article)
 
-    analytics_price = None
-    if analytics_item.get("price") is not None:
-        analytics_price = parse_price_number(str(analytics_item.get("price")))
+    analytics_price = parse_analytics_price(analytics_item)
 
     name = parse_name(article, analytics_item=analytics_item)
     url = parse_product_url(article)
@@ -559,15 +616,13 @@ def parse_listing_article(
         analytics_price=analytics_price,
     )
 
-    if final_price is None:
-        final_price = analytics_price
-
-    if (
-        final_unit_price is None
-        and original_unit_price is None
-        and final_price is not None
-    ):
-        final_unit_price = final_price
+    final_price, final_unit_price, original_price, original_unit_price = reconcile_prices(
+        final_price=final_price,
+        final_unit_price=final_unit_price,
+        original_price=original_price,
+        original_unit_price=original_unit_price,
+        analytics_price=analytics_price,
+    )
 
     if discount_percent is None:
         if final_price and original_price and original_price > final_price:
@@ -702,6 +757,12 @@ def crawl_category_listing(
             articles = t.css("section.productList div[data-plugin-product]")
             if not articles:
                 articles = t.css("div[data-plugin-product]")
+            if not articles:
+                articles = t.css("div[data-plugin-analyticsimpressions]")
+                if articles:
+                    print(
+                        f"page={page} -> using fallback card selector (analytics impressions)."
+                    )
             if not articles:
                 print(f"page={page} -> 0 products, stopping.")
                 break
