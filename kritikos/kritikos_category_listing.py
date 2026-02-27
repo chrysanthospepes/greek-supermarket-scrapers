@@ -1,9 +1,10 @@
 import csv
+import json
 import re
 import time
 import unicodedata
 from dataclasses import asdict, dataclass
-from typing import List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -19,7 +20,7 @@ ROOT_CATEGORIES = [
     # "categories/eidh-psugeiou",
     # "categories/katapsuxh",
     # "categories/pantopwleio",
-    # "categories/kaba",
+    "categories/kaba",
     # "categories/proswpikh-frontida",
     # "categories/brefika",
     # "categories/kathariothta",
@@ -59,13 +60,23 @@ _unit_price_to_re = re.compile(
 _set_price_re = re.compile(r"€\s*(\d+(?:[.,]\d+)?)\s*το\s*σετ", re.IGNORECASE)
 _money_off_re = re.compile(r"-\s*\d+(?:[.,]\d+)?\s*€", re.IGNORECASE)
 _brand_token_letters_re = re.compile(r"[^A-Za-zΑ-ΩΆ-ΏΪΫΈΉΊΌΎΏά-ώϊϋΐΰ]")
+_identity_token_cleanup_re = re.compile(r"[^0-9a-zα-ω]+")
+_image_sku_hint_re = re.compile(r"\d{3,8}")
 _unit_desc_cleanup_re = re.compile(
     r"(?:\s*-\s*ανά\s+\d+[.,]?\d*\s*(?:γρ|gr|ml|lt|l)\.?)*$",
     re.IGNORECASE,
 )
 _pack_token_re = re.compile(
-    r"\b\d+\s*[*xX]\s*\d+(?:[.,]\d+)?\s*(?:kg|g|gr|γρ|ml|l|lt)\b"
-    r"|\b\d+(?:[.,]\d+)?\s*(?:kg|g|gr|γρ|ml|l|lt|τεμ|τεμ\.|τεμάχια?|pcs?)\b",
+    r"\b\d+\s*(?:[*xX×])\s*\d+(?:[.,]\d+)?\s*"
+    r"(?:kg|kgr|g|gr|γρ|ml|cl|l|lt)\b\.?"
+    r"|\b\d+(?:[.,]\d+)?\s*"
+    r"(?:kg|kgr|g|gr|γρ|ml|cl|l|lt)\b\.?",
+    re.IGNORECASE,
+)
+_pack_token_parts_re = re.compile(
+    r"^\s*(?:(?P<count>\d+)\s*(?:[*xX×])\s*)?"
+    r"(?P<amount>\d+(?:[.,]\d+)?)\s*"
+    r"(?P<unit>kg|kgr|g|gr|γρ|ml|cl|l|lt)\s*\.?\s*$",
     re.IGNORECASE,
 )
 _brand_connector_tokens = {"&", "+", "/"}
@@ -394,6 +405,21 @@ def parse_price_node(node) -> Optional[float]:
     return parse_price_number(node.text(separator=" ", strip=True))
 
 
+def parse_offer_set_price_value(value) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric >= 100:
+            return round(numeric / 100.0, 2)
+        return round(numeric, 2)
+    if isinstance(value, str):
+        parsed = parse_price_number(value)
+        if parsed is not None:
+            return round(parsed, 2)
+    return None
+
+
 def looks_like_brand_token(token: str) -> bool:
     cleaned = _brand_token_letters_re.sub("", token or "")
     if len(cleaned) < 2:
@@ -410,12 +436,98 @@ def extract_pack_tokens(desc_text: str) -> List[str]:
     out: List[str] = []
     seen: Set[str] = set()
     for token in matches:
-        key = normalize_text_no_accents(token)
+        normalized_token = normalize_pack_token_display(token)
+        if not normalized_token:
+            continue
+        key = canonical_pack_token_key(normalized_token)
         if key in seen:
             continue
         seen.add(key)
-        out.append(token)
+        out.append(normalized_token)
     return out
+
+
+def format_pack_amount(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def normalize_pack_token_display(token: str) -> Optional[str]:
+    raw = normalize_spaces(token).rstrip(".,;:")
+    if not raw:
+        return None
+
+    m = _pack_token_parts_re.match(raw)
+    if not m:
+        return None
+
+    count_text = m.group("count")
+    amount_text = (m.group("amount") or "").replace(",", ".")
+    unit_text = normalize_text_no_accents(m.group("unit") or "").lower()
+    unit_text = unit_text.replace("γρ", "gr")
+    if unit_text == "kgr":
+        unit_text = "kg"
+    if unit_text == "lt":
+        unit_text = "l"
+
+    try:
+        amount_value = float(amount_text)
+    except ValueError:
+        return None
+
+    if unit_text == "cl":
+        amount_value *= 10.0
+        unit_out = "mL"
+    elif unit_text == "ml":
+        unit_out = "mL"
+    elif unit_text == "l":
+        unit_out = "L"
+    elif unit_text in {"g", "gr"}:
+        unit_out = "g"
+    elif unit_text == "kg":
+        unit_out = "kg"
+    else:
+        return None
+
+    amount_out = format_pack_amount(amount_value)
+    if count_text:
+        try:
+            count_value = int(count_text)
+        except ValueError:
+            return None
+        return f"{count_value}*{amount_out}{unit_out}"
+    return f"{amount_out}{unit_out}"
+
+
+def canonical_pack_token_key(token: str) -> str:
+    display = normalize_pack_token_display(token)
+    if display:
+        return display.lower()
+    fallback = normalize_text_no_accents(token).lower()
+    fallback = fallback.replace("×", "x").replace("*", "x")
+    fallback = fallback.replace(",", ".")
+    return re.sub(r"\s+", "", fallback)
+
+
+def append_pack_tokens_to_name(name: Optional[str], *token_sources: str) -> Optional[str]:
+    base_name = normalize_spaces(name or "")
+    if not base_name:
+        return name
+
+    out_name = base_name
+    seen_tokens: Set[str] = {
+        canonical_pack_token_key(token) for token in extract_pack_tokens(out_name)
+    }
+    for source in token_sources:
+        for pack_token in extract_pack_tokens(source):
+            key = canonical_pack_token_key(pack_token)
+            if not key or key in seen_tokens:
+                continue
+            seen_tokens.add(key)
+            out_name = normalize_spaces(f"{out_name} {pack_token}")
+
+    return out_name or None
 
 
 def parse_brand_and_name(title_text: str, desc_text: str) -> Tuple[Optional[str], Optional[str]]:
@@ -456,9 +568,7 @@ def parse_brand_and_name(title_text: str, desc_text: str) -> Tuple[Optional[str]
 
     name = name_title or desc
     if name and desc:
-        for pack_token in extract_pack_tokens(desc):
-            if normalize_text_no_accents(pack_token) not in normalize_text_no_accents(name):
-                name = normalize_spaces(f"{name} {pack_token}")
+        name = append_pack_tokens_to_name(name, desc)
     elif not name:
         name = desc
 
@@ -532,6 +642,7 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
 
     title_text = normalize_spaces(title_node.text(separator=" ", strip=True) if title_node else "")
     desc_text = normalize_spaces(desc_node.text(separator=" ", strip=True) if desc_node else "")
+    desc_title_text = normalize_spaces((desc_node.attributes.get("title") if desc_node else "") or "")
     unit_text = normalize_spaces(unit_node.text(separator=" ", strip=True) if unit_node else "")
     badge_text = normalize_spaces(badge_node.text(separator=" ", strip=True) if badge_node else "")
     badge_candidates = [
@@ -544,6 +655,12 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
     badge_text = " | ".join(dict.fromkeys(badge_candidates))
 
     brand, name = parse_brand_and_name(title_text=title_text, desc_text=desc_text)
+    name = append_pack_tokens_to_name(
+        name,
+        desc_text,
+        desc_title_text,
+        unit_text,
+    )
     final_price = parse_price_node(final_node)
     original_price = parse_price_node(original_node)
     if (
@@ -568,7 +685,11 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
         final_unit_price = final_price
 
     original_unit_price = None
-    unit_of_measure = unit_of_measure or detect_unit_of_measure(f"{unit_text} {desc_text}") or "piece"
+    unit_of_measure = (
+        unit_of_measure
+        or detect_unit_of_measure(f"{unit_text} {desc_text} {desc_title_text}")
+        or "piece"
+    )
 
     full_card_text = normalize_spaces(card.text(separator=" ", strip=True))
     href_text = unquote(anchor.attributes.get("href") or "")
@@ -582,6 +703,7 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
                 badge_text,
                 title_text,
                 desc_text,
+                desc_title_text,
                 unit_text,
                 full_card_text,
                 href_text,
@@ -662,6 +784,406 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
     return row
 
 
+def is_offer_product_url(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    return "/offers/" in urlparse(url).path.lower()
+
+
+def build_product_identity_key(row: ListingProductRow) -> Optional[str]:
+    brand = normalize_spaces(row.brand or "")
+    name = normalize_spaces(row.name or "")
+    if not brand and not name:
+        return None
+
+    base = normalize_text_no_accents(f"{brand} {name}")
+    base = _identity_token_cleanup_re.sub(" ", base)
+    key = normalize_spaces(base)
+    return key or None
+
+
+def extract_image_sku_hints(image_url: Optional[str]) -> List[str]:
+    if not image_url:
+        return []
+    path = urlparse(image_url).path
+    filename = path.rsplit("/", 1)[-1]
+    if not filename:
+        return []
+
+    hints: List[str] = []
+    seen: Set[str] = set()
+    for token in reversed(_image_sku_hint_re.findall(filename)):
+        token = token.strip()
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        hints.append(token)
+    return hints
+
+
+def apply_offer_overlay_to_base(base: ListingProductRow, offer_rows: List[ListingProductRow]) -> None:
+    has_one_plus_one = any(r.one_plus_one for r in offer_rows)
+    has_two_plus_one = any(r.two_plus_one for r in offer_rows)
+    offer_set_prices = [r.final_set_price for r in offer_rows if r.final_set_price is not None]
+    chosen_set_price = min(offer_set_prices) if offer_set_prices else None
+
+    base.one_plus_one = base.one_plus_one or has_one_plus_one
+    base.two_plus_one = base.two_plus_one or has_two_plus_one
+
+    if base.final_set_price is None and chosen_set_price is not None:
+        base.final_set_price = chosen_set_price
+
+    if base.one_plus_one or base.two_plus_one:
+        base.promo_text = None
+
+    offer_name_sources = [r.name for r in offer_rows if r.name]
+    if offer_name_sources:
+        base.name = append_pack_tokens_to_name(base.name, *offer_name_sources)
+
+    has_price_discount = (
+        base.original_price is not None
+        and base.final_price is not None
+        and base.original_price > base.final_price
+    )
+    base.offer = (
+        base.one_plus_one
+        or base.two_plus_one
+        or base.discount_percent is not None
+        or has_price_discount
+        or (base.promo_text is not None)
+    )
+
+
+def extract_offer_overlay_map_from_next_data(tree: HTMLParser) -> Dict[str, Dict[str, Any]]:
+    script = tree.css_first("script#__NEXT_DATA__")
+    if not script:
+        return {}
+
+    raw_json = script.text(deep=True) or script.text() or ""
+    if not raw_json:
+        return {}
+
+    try:
+        payload = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+    offers = (
+        payload.get("props", {})
+        .get("pageProps", {})
+        .get("offers")
+    ) or []
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for offer in offers:
+        if not isinstance(offer, dict):
+            continue
+
+        promo_blob = normalize_spaces(
+            " ".join(
+                str(part)
+                for part in (
+                    offer.get("mobileSticker"),
+                    offer.get("webSticker"),
+                    offer.get("name"),
+                    offer.get("description"),
+                    offer.get("shortDescription"),
+                )
+                if part
+            )
+        )
+        one_plus_one, two_plus_one = detect_combo_offers(promo_blob)
+        badge_one_plus_one, badge_two_plus_one = detect_combo_from_badge(promo_blob)
+        one_plus_one = one_plus_one or badge_one_plus_one
+        two_plus_one = two_plus_one or badge_two_plus_one
+        if not one_plus_one:
+            one_plus_one = bool(_one_plus_one_re.search(promo_blob))
+        if not two_plus_one:
+            two_plus_one = bool(_two_plus_one_re.search(promo_blob))
+
+        final_set_price = parse_offer_set_price_value(offer.get("price"))
+        pack_tokens = extract_pack_tokens(
+            normalize_spaces(
+                " ".join(
+                    str(part)
+                    for part in (
+                        offer.get("name"),
+                        offer.get("description"),
+                        offer.get("shortDescription"),
+                    )
+                    if part
+                )
+            )
+        )
+        products = offer.get("products") or []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            sku = normalize_spaces(str(item.get("sku") or ""))
+            if not sku:
+                continue
+
+            entry = out.setdefault(
+                sku,
+                {
+                    "one_plus_one": False,
+                    "two_plus_one": False,
+                    "final_set_price": None,
+                    "pack_tokens": [],
+                },
+            )
+            entry["one_plus_one"] = bool(entry["one_plus_one"]) or one_plus_one
+            entry["two_plus_one"] = bool(entry["two_plus_one"]) or two_plus_one
+
+            existing_set = entry.get("final_set_price")
+            if final_set_price is not None:
+                if existing_set is None:
+                    entry["final_set_price"] = final_set_price
+                else:
+                    entry["final_set_price"] = min(float(existing_set), final_set_price)
+
+            existing_tokens = [str(token) for token in entry.get("pack_tokens") or []]
+            existing_keys = {normalize_text_no_accents(token) for token in existing_tokens}
+            for token in pack_tokens:
+                token_key = normalize_text_no_accents(token)
+                if token_key in existing_keys:
+                    continue
+                existing_tokens.append(token)
+                existing_keys.add(token_key)
+            entry["pack_tokens"] = existing_tokens
+
+    return out
+
+
+def extract_static_pack_tokens_map_from_next_data(tree: HTMLParser) -> Dict[str, List[str]]:
+    script = tree.css_first("script#__NEXT_DATA__")
+    if not script:
+        return {}
+
+    raw_json = script.text(deep=True) or script.text() or ""
+    if not raw_json:
+        return {}
+
+    try:
+        payload = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+    static_products = (
+        payload.get("props", {})
+        .get("pageProps", {})
+        .get("staticProducts")
+    ) or {}
+    if not isinstance(static_products, dict):
+        return {}
+
+    out: Dict[str, List[str]] = {}
+    for group in static_products.values():
+        if not isinstance(group, list):
+            continue
+        for product in group:
+            if not isinstance(product, dict):
+                continue
+
+            sku = normalize_spaces(str(product.get("sku") or ""))
+            if not sku:
+                continue
+
+            token_source_parts: List[str] = []
+            for field in ("name", "displayName", "details"):
+                value = product.get(field)
+                if isinstance(value, str) and value.strip():
+                    token_source_parts.append(value)
+            token_source = normalize_spaces(" ".join(token_source_parts))
+            if not token_source:
+                continue
+
+            tokens = extract_pack_tokens(token_source)
+            if not tokens:
+                continue
+
+            existing = out.setdefault(sku, [])
+            existing_keys = {canonical_pack_token_key(token) for token in existing}
+            for token in tokens:
+                token_key = canonical_pack_token_key(token)
+                if token_key in existing_keys:
+                    continue
+                existing.append(token)
+                existing_keys.add(token_key)
+
+    return out
+
+
+def overlay_offer_map_on_rows(
+    rows: List[ListingProductRow],
+    offer_map_by_sku: Dict[str, Dict[str, Any]],
+) -> List[ListingProductRow]:
+    if not offer_map_by_sku:
+        return rows
+
+    base_indices_by_sku: Dict[str, List[int]] = {}
+    for idx, row in enumerate(rows):
+        if is_offer_product_url(row.url):
+            continue
+        if row.sku:
+            base_indices_by_sku.setdefault(row.sku, []).append(idx)
+
+    updated_rows = 0
+    for sku, payload in offer_map_by_sku.items():
+        candidate_indices = base_indices_by_sku.get(sku) or []
+        if not candidate_indices:
+            continue
+
+        one_plus_one = bool(payload.get("one_plus_one"))
+        two_plus_one = bool(payload.get("two_plus_one"))
+        set_price = payload.get("final_set_price")
+        pack_tokens = [str(token) for token in (payload.get("pack_tokens") or [])]
+        for idx in candidate_indices:
+            row = rows[idx]
+            changed = False
+
+            if one_plus_one and not row.one_plus_one:
+                row.one_plus_one = True
+                changed = True
+            if two_plus_one and not row.two_plus_one:
+                row.two_plus_one = True
+                changed = True
+            if set_price is not None and row.final_set_price is None:
+                row.final_set_price = float(set_price)
+                changed = True
+            if pack_tokens:
+                new_name = append_pack_tokens_to_name(row.name, " ".join(pack_tokens))
+                if new_name != row.name:
+                    row.name = new_name
+                    changed = True
+
+            if row.one_plus_one or row.two_plus_one:
+                row.promo_text = None
+
+            has_price_discount = (
+                row.original_price is not None
+                and row.final_price is not None
+                and row.original_price > row.final_price
+            )
+            row.offer = (
+                row.one_plus_one
+                or row.two_plus_one
+                or row.discount_percent is not None
+                or has_price_discount
+                or (row.promo_text is not None)
+            )
+            if changed:
+                updated_rows += 1
+
+    if updated_rows:
+        print(f"post-process next_data overlay: updated_rows={updated_rows}")
+    return rows
+
+
+def overlay_offer_section_rows(rows: List[ListingProductRow]) -> List[ListingProductRow]:
+    grouped_indices: Dict[str, List[int]] = {}
+    for idx, row in enumerate(rows):
+        key = build_product_identity_key(row)
+        if not key:
+            continue
+        grouped_indices.setdefault(key, []).append(idx)
+
+    to_drop: Set[int] = set()
+    merged_groups = 0
+    dropped_offer_rows = 0
+    matched_offer_indices: Set[int] = set()
+
+    for indices in grouped_indices.values():
+        if len(indices) < 2:
+            continue
+
+        base_indices = [idx for idx in indices if not is_offer_product_url(rows[idx].url)]
+        offer_indices = [idx for idx in indices if is_offer_product_url(rows[idx].url)]
+        if not base_indices or not offer_indices:
+            continue
+
+        merged_groups += 1
+        offer_rows = [rows[idx] for idx in offer_indices]
+
+        for idx in base_indices:
+            apply_offer_overlay_to_base(rows[idx], offer_rows)
+
+        for idx in offer_indices:
+            if idx not in to_drop:
+                to_drop.add(idx)
+                dropped_offer_rows += 1
+            matched_offer_indices.add(idx)
+
+    # Fallback overlay: match /offers cards to /products cards by image-derived SKU hints.
+    base_indices_by_sku: Dict[str, List[int]] = {}
+    for idx, row in enumerate(rows):
+        if is_offer_product_url(row.url):
+            continue
+
+        base_skus = []
+        if row.sku:
+            base_skus.append(row.sku.strip())
+        base_skus.extend(extract_image_sku_hints(row.image_url))
+        for sku in base_skus:
+            if not sku:
+                continue
+            base_indices_by_sku.setdefault(sku, []).append(idx)
+
+    for offer_idx, offer_row in enumerate(rows):
+        if not is_offer_product_url(offer_row.url):
+            continue
+        if offer_idx in matched_offer_indices:
+            continue
+
+        offer_skus = []
+        if offer_row.sku:
+            offer_skus.append(offer_row.sku.strip())
+        offer_skus.extend(extract_image_sku_hints(offer_row.image_url))
+
+        candidate_indices: Set[int] = set()
+        for sku in offer_skus:
+            for base_idx in base_indices_by_sku.get(sku, []):
+                candidate_indices.add(base_idx)
+        if not candidate_indices:
+            continue
+
+        offer_key_tokens = set((build_product_identity_key(offer_row) or "").split())
+        scored: List[Tuple[int, int]] = []
+        for base_idx in candidate_indices:
+            base_row = rows[base_idx]
+            base_key_tokens = set((build_product_identity_key(base_row) or "").split())
+            score = len(offer_key_tokens.intersection(base_key_tokens))
+
+            if offer_row.brand and base_row.brand:
+                if normalize_text_no_accents(offer_row.brand) == normalize_text_no_accents(base_row.brand):
+                    score += 2
+            scored.append((score, base_idx))
+
+        if len(scored) == 1:
+            best_indices = [scored[0][1]]
+        else:
+            best_score = max(score for score, _ in scored)
+            if best_score <= 0:
+                continue
+            best_indices = [idx for score, idx in scored if score == best_score]
+
+        apply_offer_overlay_to_base(
+            rows[best_indices[0]],
+            [offer_row],
+        )
+        if offer_idx not in to_drop:
+            to_drop.add(offer_idx)
+            dropped_offer_rows += 1
+
+    if merged_groups or dropped_offer_rows:
+        print(
+            f"post-process overlay: merged_groups={merged_groups} "
+            f"dropped_offer_rows={dropped_offer_rows}"
+        )
+
+    return [row for idx, row in enumerate(rows) if idx not in to_drop]
+
+
 def crawl_category_listing(
     root_listing: str,
     root_category: str,
@@ -670,6 +1192,7 @@ def crawl_category_listing(
     root_listing = normalize(root_listing.rstrip("/"))
     rows: List[ListingProductRow] = []
     seen_keys: Set[str] = set()
+    offer_overlay_map_by_sku: Dict[str, Dict[str, Any]] = {}
 
     page = 1
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
@@ -683,6 +1206,64 @@ def crawl_category_listing(
 
             response.raise_for_status()
             t = HTMLParser(response.text)
+            page_offer_map = extract_offer_overlay_map_from_next_data(t)
+            page_static_pack_map = extract_static_pack_tokens_map_from_next_data(t)
+            for sku, payload in page_offer_map.items():
+                existing = offer_overlay_map_by_sku.setdefault(
+                    sku,
+                    {
+                        "one_plus_one": False,
+                        "two_plus_one": False,
+                        "final_set_price": None,
+                        "pack_tokens": [],
+                    },
+                )
+                existing["one_plus_one"] = bool(existing["one_plus_one"]) or bool(payload.get("one_plus_one"))
+                existing["two_plus_one"] = bool(existing["two_plus_one"]) or bool(payload.get("two_plus_one"))
+
+                new_set_price = payload.get("final_set_price")
+                old_set_price = existing.get("final_set_price")
+                if new_set_price is not None:
+                    if old_set_price is None:
+                        existing["final_set_price"] = float(new_set_price)
+                    else:
+                        existing["final_set_price"] = min(float(old_set_price), float(new_set_price))
+
+                existing_tokens = [str(token) for token in existing.get("pack_tokens") or []]
+                existing_keys = {canonical_pack_token_key(token) for token in existing_tokens}
+                for token in payload.get("pack_tokens") or []:
+                    token_text = normalize_spaces(str(token))
+                    if not token_text:
+                        continue
+                    token_key = canonical_pack_token_key(token_text)
+                    if token_key in existing_keys:
+                        continue
+                    existing_tokens.append(token_text)
+                    existing_keys.add(token_key)
+                existing["pack_tokens"] = existing_tokens
+
+            for sku, pack_tokens in page_static_pack_map.items():
+                existing = offer_overlay_map_by_sku.setdefault(
+                    sku,
+                    {
+                        "one_plus_one": False,
+                        "two_plus_one": False,
+                        "final_set_price": None,
+                        "pack_tokens": [],
+                    },
+                )
+                existing_tokens = [str(token) for token in existing.get("pack_tokens") or []]
+                existing_keys = {canonical_pack_token_key(token) for token in existing_tokens}
+                for token in pack_tokens:
+                    token_text = normalize_spaces(str(token))
+                    if not token_text:
+                        continue
+                    token_key = canonical_pack_token_key(token_text)
+                    if token_key in existing_keys:
+                        continue
+                    existing_tokens.append(token_text)
+                    existing_keys.add(token_key)
+                existing["pack_tokens"] = existing_tokens
             next_page, max_page, has_next = extract_pagination_state(
                 tree=t,
                 requested_page=page,
@@ -732,7 +1313,8 @@ def crawl_category_listing(
             page = next_page
             time.sleep(PAGE_SLEEP_SECONDS)
 
-    return rows
+    rows = overlay_offer_map_on_rows(rows, offer_overlay_map_by_sku)
+    return overlay_offer_section_rows(rows)
 
 
 def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
