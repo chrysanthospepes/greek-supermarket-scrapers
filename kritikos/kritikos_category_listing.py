@@ -91,6 +91,8 @@ class ListingProductRow:
 
     final_price: Optional[float] = None
     final_unit_price: Optional[float] = None
+    hidden_price: Optional[float] = None
+    hidden_unit_price: Optional[float] = None
     original_price: Optional[float] = None
     original_unit_price: Optional[float] = None
     unit_of_measure: Optional[str] = None
@@ -106,6 +108,23 @@ class ListingProductRow:
     image_url: Optional[str] = None
 
     root_category: Optional[str] = None
+
+    def refresh_hidden_prices(self) -> None:
+        multiplier = 1.0
+        if self.two_plus_one:
+            multiplier = 2.0 / 3.0
+        elif self.one_plus_one:
+            multiplier = 0.5
+
+        self.hidden_price = (
+            self.final_price * multiplier if self.final_price is not None else None
+        )
+        self.hidden_unit_price = (
+            self.final_unit_price * multiplier if self.final_unit_price is not None else None
+        )
+
+    def __post_init__(self) -> None:
+        self.refresh_hidden_prices()
 
 
 def normalize_spaces(text: str) -> str:
@@ -852,6 +871,7 @@ def apply_offer_overlay_to_base(base: ListingProductRow, offer_rows: List[Listin
         or has_price_discount
         or (base.promo_text is not None)
     )
+    base.refresh_hidden_prices()
 
 
 def extract_offer_overlay_map_from_next_data(tree: HTMLParser) -> Dict[str, Dict[str, Any]]:
@@ -1072,6 +1092,7 @@ def overlay_offer_map_on_rows(
                 or has_price_discount
                 or (row.promo_text is not None)
             )
+            row.refresh_hidden_prices()
             if changed:
                 updated_rows += 1
 
