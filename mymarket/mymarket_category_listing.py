@@ -13,7 +13,7 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.mymarket.gr"
 ROOT_CATEGORIES = [
-    # "frouta-lachanika",
+    "frouta-lachanika",
     # "fresko-kreas-psari",
     # "galaktokomika-eidi-psygeiou",
     # "tyria-allantika-deli",
@@ -24,10 +24,11 @@ ROOT_CATEGORIES = [
     # "trofima",
     # "frontida-gia-to-moro-sas",
     # "prosopiki-frontida",
-    "oikiaki-frontida-chartika",
+    # "oikiaki-frontida-chartika",
     # "kouzina-mikrosyskeves-spiti",
     # "frontida-gia-to-katoikidio-sas",
     # "epochiaka",
+    # "offers/1-plus-1",
 ]
 MAX_PAGES_PER_CATEGORY = 500
 PAGE_SLEEP_SECONDS = 0.1
@@ -417,14 +418,15 @@ def parse_image_url(article) -> Optional[str]:
     return None
 
 
-def parse_price_labels(article):
+def parse_price_labels(
+    article,
+    one_plus_one: bool = False,
+):
     final_price = None
     original_price = None
     final_unit_price = None
     original_unit_price = None
     unit_of_measure = None
-    final_set_price = None
-    original_set_price = None
 
     blocks = list(article.css(".measure-label-wrapper"))
     blocks.extend(article.css(".product-full--product-tags .rounded"))
@@ -465,20 +467,26 @@ def parse_price_labels(article):
         is_final_label = low_label.startswith("τελική")
 
         if is_set:
-            if is_old:
-                original_set_price = price_val
-            else:
-                final_set_price = price_val
+            if one_plus_one and not is_old:
+                if final_price is None or is_final_label:
+                    final_price = price_val
         elif is_unit:
             unit_guess = detect_unit_of_measure(label)
             if unit_guess and unit_of_measure is None:
                 unit_of_measure = unit_guess
 
-            if is_old:
-                original_unit_price = price_val
-            else:
-                if final_unit_price is None or is_final_label:
+            if one_plus_one:
+                if is_old or is_initial_label:
+                    if final_unit_price is None or is_initial_label:
+                        final_unit_price = price_val
+                elif final_unit_price is None:
                     final_unit_price = price_val
+            else:
+                if is_old:
+                    original_unit_price = price_val
+                else:
+                    if final_unit_price is None or is_final_label:
+                        final_unit_price = price_val
         else:
             if is_old or is_initial_label:
                 if original_price is None or is_initial_label:
@@ -498,8 +506,6 @@ def parse_price_labels(article):
         original_price,
         original_unit_price,
         unit_of_measure,
-        final_set_price,
-        original_set_price,
     )
 
 
@@ -527,9 +533,7 @@ def parse_listing_article(
         original_price,
         original_unit_price,
         unit_of_measure,
-        final_set_price,
-        original_set_price,
-    ) = parse_price_labels(article)
+    ) = parse_price_labels(article, one_plus_one=one_plus_one)
 
     final_price, final_unit_price, original_price, original_unit_price = reconcile_prices(
         final_price=final_price,
@@ -546,11 +550,6 @@ def parse_listing_article(
             and final_unit_price is not None
             and original_unit_price > final_unit_price
         )
-        or (
-            original_set_price is not None
-            and final_set_price is not None
-            and original_set_price > final_set_price
-        )
     )
     offer = one_plus_one or two_plus_one or discount_percent is not None or has_price_discount
     unit_of_measure = unit_of_measure or "piece"
@@ -565,8 +564,8 @@ def parse_listing_article(
         original_price=original_price,
         original_unit_price=original_unit_price,
         unit_of_measure=unit_of_measure,
-        final_set_price=final_set_price,
-        original_set_price=original_set_price,
+        final_set_price=None,
+        original_set_price=None,
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
