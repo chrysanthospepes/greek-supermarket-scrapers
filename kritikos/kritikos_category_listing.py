@@ -12,7 +12,7 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://kritikos-sm.gr"
 ROOT_CATEGORIES = [
-    "categories/manabikh",
+    # "categories/manabikh",
     # "categories/fresko-kreas",
     # "categories/allantika",
     # "categories/turokomika",
@@ -20,7 +20,7 @@ ROOT_CATEGORIES = [
     # "categories/eidh-psugeiou",
     # "categories/katapsuxh",
     # "categories/pantopwleio",
-    "categories/kaba",
+    # "categories/kaba",
     # "categories/proswpikh-frontida",
     # "categories/brefika",
     # "categories/kathariothta",
@@ -57,7 +57,6 @@ _unit_price_to_re = re.compile(
     r"(κιλ(?:ό|ου)?|λίτρ(?:ο|ου)?|λιτρ(?:ο|ου)?|kg|l|lt|τεμ(?:άχιο)?|τμχ|τεμάχιο)",
     re.IGNORECASE,
 )
-_set_price_re = re.compile(r"€\s*(\d+(?:[.,]\d+)?)\s*το\s*σετ", re.IGNORECASE)
 _money_off_re = re.compile(r"-\s*\d+(?:[.,]\d+)?\s*€", re.IGNORECASE)
 _brand_token_letters_re = re.compile(r"[^A-Za-zΑ-ΩΆ-ΏΪΫΈΉΊΌΎΏά-ώϊϋΐΰ]")
 _identity_token_cleanup_re = re.compile(r"[^0-9a-zα-ω]+")
@@ -405,38 +404,10 @@ def parse_unit_price(desc_text: str) -> Tuple[Optional[float], Optional[str]]:
     return unit_price, unit_of_measure
 
 
-def parse_set_price(desc_text: str) -> Optional[float]:
-    txt = normalize_spaces(desc_text)
-    if not txt:
-        return None
-    m = _set_price_re.search(txt)
-    if not m:
-        return None
-    value = parse_price_number(m.group(1))
-    if value is None or value <= 0:
-        return None
-    return value
-
-
 def parse_price_node(node) -> Optional[float]:
     if node is None:
         return None
     return parse_price_number(node.text(separator=" ", strip=True))
-
-
-def parse_offer_set_price_value(value) -> Optional[float]:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        numeric = float(value)
-        if numeric >= 100:
-            return round(numeric / 100.0, 2)
-        return round(numeric, 2)
-    if isinstance(value, str):
-        parsed = parse_price_number(value)
-        if parsed is not None:
-            return round(parsed, 2)
-    return None
 
 
 def looks_like_brand_token(token: str) -> bool:
@@ -690,9 +661,6 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
         original_price = None
 
     unit_price, unit_of_measure = parse_unit_price(unit_text)
-    final_set_price = parse_set_price(unit_text)
-    if final_set_price is None and "σετ" in normalize_text_no_accents(unit_text) and final_price:
-        final_set_price = final_price
     final_unit_price = unit_price
     if final_unit_price is None and final_price is not None:
         final_unit_price = final_price
@@ -787,7 +755,7 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
         original_price=original_price,
         original_unit_price=original_unit_price,
         unit_of_measure=unit_of_measure,
-        final_set_price=final_set_price,
+        final_set_price=None,
         original_set_price=None,
         discount_percent=discount_percent,
         offer=offer,
@@ -843,14 +811,9 @@ def extract_image_sku_hints(image_url: Optional[str]) -> List[str]:
 def apply_offer_overlay_to_base(base: ListingProductRow, offer_rows: List[ListingProductRow]) -> None:
     has_one_plus_one = any(r.one_plus_one for r in offer_rows)
     has_two_plus_one = any(r.two_plus_one for r in offer_rows)
-    offer_set_prices = [r.final_set_price for r in offer_rows if r.final_set_price is not None]
-    chosen_set_price = min(offer_set_prices) if offer_set_prices else None
 
     base.one_plus_one = base.one_plus_one or has_one_plus_one
     base.two_plus_one = base.two_plus_one or has_two_plus_one
-
-    if base.final_set_price is None and chosen_set_price is not None:
-        base.final_set_price = chosen_set_price
 
     if base.one_plus_one or base.two_plus_one:
         base.promo_text = None
@@ -921,7 +884,6 @@ def extract_offer_overlay_map_from_next_data(tree: HTMLParser) -> Dict[str, Dict
         if not two_plus_one:
             two_plus_one = bool(_two_plus_one_re.search(promo_blob))
 
-        final_set_price = parse_offer_set_price_value(offer.get("price"))
         pack_tokens = extract_pack_tokens(
             normalize_spaces(
                 " ".join(
@@ -954,13 +916,6 @@ def extract_offer_overlay_map_from_next_data(tree: HTMLParser) -> Dict[str, Dict
             )
             entry["one_plus_one"] = bool(entry["one_plus_one"]) or one_plus_one
             entry["two_plus_one"] = bool(entry["two_plus_one"]) or two_plus_one
-
-            existing_set = entry.get("final_set_price")
-            if final_set_price is not None:
-                if existing_set is None:
-                    entry["final_set_price"] = final_set_price
-                else:
-                    entry["final_set_price"] = min(float(existing_set), final_set_price)
 
             existing_tokens = [str(token) for token in entry.get("pack_tokens") or []]
             existing_keys = {normalize_text_no_accents(token) for token in existing_tokens}
@@ -1056,7 +1011,6 @@ def overlay_offer_map_on_rows(
 
         one_plus_one = bool(payload.get("one_plus_one"))
         two_plus_one = bool(payload.get("two_plus_one"))
-        set_price = payload.get("final_set_price")
         pack_tokens = [str(token) for token in (payload.get("pack_tokens") or [])]
         for idx in candidate_indices:
             row = rows[idx]
@@ -1067,9 +1021,6 @@ def overlay_offer_map_on_rows(
                 changed = True
             if two_plus_one and not row.two_plus_one:
                 row.two_plus_one = True
-                changed = True
-            if set_price is not None and row.final_set_price is None:
-                row.final_set_price = float(set_price)
                 changed = True
             if pack_tokens:
                 new_name = append_pack_tokens_to_name(row.name, " ".join(pack_tokens))
@@ -1241,14 +1192,6 @@ def crawl_category_listing(
                 )
                 existing["one_plus_one"] = bool(existing["one_plus_one"]) or bool(payload.get("one_plus_one"))
                 existing["two_plus_one"] = bool(existing["two_plus_one"]) or bool(payload.get("two_plus_one"))
-
-                new_set_price = payload.get("final_set_price")
-                old_set_price = existing.get("final_set_price")
-                if new_set_price is not None:
-                    if old_set_price is None:
-                        existing["final_set_price"] = float(new_set_price)
-                    else:
-                        existing["final_set_price"] = min(float(old_set_price), float(new_set_price))
 
                 existing_tokens = [str(token) for token in existing.get("pack_tokens") or []]
                 existing_keys = {canonical_pack_token_key(token) for token in existing_tokens}
