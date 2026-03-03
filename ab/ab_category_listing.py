@@ -374,6 +374,21 @@ def parse_brand(article) -> Optional[str]:
     return value
 
 
+def ensure_brand_in_name(name: Optional[str], brand: Optional[str]) -> Optional[str]:
+    clean_name = normalize_spaces(name or "")
+    if not clean_name:
+        return None
+
+    clean_brand = normalize_spaces(brand or "")
+    if not clean_brand:
+        return clean_name
+
+    if normalize_text_no_accents(clean_name).startswith(normalize_text_no_accents(clean_brand)):
+        return clean_name
+
+    return normalize_spaces(f"{clean_brand} {clean_name}")
+
+
 def parse_image_url(article) -> Optional[str]:
     img = article.css_first("img[data-testid='product-block-image']")
     if not img:
@@ -482,6 +497,7 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
     url = parse_product_url(article)
     sku = parse_sku(article)
     brand = parse_brand(article)
+    name = ensure_brand_in_name(name, brand)
 
     final_price, original_price = parse_main_prices(article)
     final_unit_price, original_unit_price, unit_of_measure = parse_unit_prices(article)
@@ -640,6 +656,7 @@ def parse_api_listing_product(
     brand = normalize_spaces(str(raw_brand))
     if not brand or brand == "-":
         brand = None
+    name = ensure_brand_in_name(name, brand)
 
     price = product.get("price") if isinstance(product.get("price"), dict) else {}
     show_strikethrough = bool(price.get("showStrikethroughPrice"))

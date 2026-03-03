@@ -548,13 +548,7 @@ def parse_brand_and_name(title_text: str, desc_text: str) -> Tuple[Optional[str]
 
     brand = " ".join(brand_tokens) if brand_tokens else None
 
-    name_title = title
-    if brand and title.startswith(brand):
-        stripped = normalize_spaces(title[len(brand) :])
-        if stripped:
-            name_title = stripped
-
-    name = name_title or desc
+    name = title or desc
     if name and desc:
         name = append_pack_tokens_to_name(name, desc)
     elif not name:
