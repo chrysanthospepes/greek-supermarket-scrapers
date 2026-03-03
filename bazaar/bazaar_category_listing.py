@@ -4,9 +4,10 @@ import re
 import time
 import unicodedata
 from dataclasses import asdict, dataclass
+from decimal import ROUND_CEILING, Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -73,6 +74,8 @@ _price_before_currency_re = re.compile(r"(-?[0-9][0-9\.,]*)\s*€", re.IGNORECAS
 BRAND_ALLOWLIST_PATH = BAZAAR_DIR / "bazaar_brand_allowlist.txt"
 BRAND_DENYLIST_PATH = BAZAAR_DIR / "bazaar_brand_denylist.txt"
 BRAND_CANDIDATES_PATH = BAZAAR_DIR / "bazaar_brand_candidates.csv"
+_hidden_price_quantum = Decimal("0.01")
+_hidden_price_fields = ("hidden_price", "hidden_unit_price")
 
 
 @dataclass
@@ -107,15 +110,27 @@ class ListingProductRow:
         elif self.one_plus_one:
             multiplier = 0.5
 
-        self.hidden_price = (
-            self.final_price * multiplier if self.final_price is not None else None
-        )
-        self.hidden_unit_price = (
-            self.final_unit_price * multiplier if self.final_unit_price is not None else None
-        )
+        self.hidden_price = round_hidden_price(self.final_price, multiplier)
+        self.hidden_unit_price = round_hidden_price(self.final_unit_price, multiplier)
 
     def __post_init__(self) -> None:
         self.refresh_hidden_prices()
+
+
+def round_hidden_price(value: Optional[float], multiplier: float) -> Optional[float]:
+    if value is None:
+        return None
+    amount = Decimal(str(value)) * Decimal(str(multiplier))
+    return float(amount.quantize(_hidden_price_quantum, rounding=ROUND_CEILING))
+
+
+def serialize_row_for_csv(row: ListingProductRow) -> Dict[str, Any]:
+    data = asdict(row)
+    for field_name in _hidden_price_fields:
+        value = data.get(field_name)
+        if value is not None:
+            data[field_name] = f"{value:.2f}"
+    return data
 
 
 @dataclass
@@ -862,7 +877,7 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow(asdict(row))
+            writer.writerow(serialize_row_for_csv(row))
 
     print(f"Saved {len(rows)} rows to {filename}")
 
