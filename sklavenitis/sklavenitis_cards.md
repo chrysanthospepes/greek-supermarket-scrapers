@@ -3269,6 +3269,496 @@
 </div>
 ```
 
-Same is for price per liter but instead of κιλό there is λίτρο
+### two plus one offer
+```html
+<div data-plugin-product="{&quot;presentation&quot;:&quot;tile&quot;,&quot;sku&quot;:&quot;1599962&quot;,&quot;unitDisplay&quot;:&quot;τεμ.&quot;,&quot;step&quot;:1,&quot;status&quot;:0,&quot;notBuyable&quot;:false,&quot;maximum&quot;:12.00,&quot;stock&quot;:{&quot;available&quot;:12.00,&quot;category&quot;:0,&quot;receivingDate&quot;:0}}" class="product  prGa_1599962 " data-item="{&quot;ProductID&quot;:194691,&quot;ProductSKU&quot;:&quot;1599962&quot;}" data-plugin-analyticsimpressions="{&quot;Disabled&quot;:false,&quot;Call&quot;:{&quot;event&quot;:&quot;view_item_list&quot;,&quot;ecommerce&quot;:{&quot;item_list_id&quot;:&quot;Καραμέλες&quot;,&quot;item_list_name&quot;:&quot;Καραμέλες&quot;,&quot;items&quot;:[{&quot;item_id&quot;:&quot;1599962&quot;,&quot;item_name&quot;:&quot;SKITTLES Καραμέλες Fruits 38g&quot;,&quot;item_brand&quot;:&quot;SKITTLES&quot;,&quot;item_category&quot;:&quot;Καραμέλες&quot;,&quot;price&quot;:0.88,&quot;item_list_id&quot;:&quot;Καραμέλες&quot;,&quot;item_list_name&quot;:&quot;Καραμέλες&quot;,&quot;index&quot;:19}]}}}" data-plugin-analyticsclickable="{&quot;Target&quot;:&quot;.absLink&quot;,&quot;calls&quot;:[[&quot;window.dataLayer.push({ ecommerce: null });window.dataLayer.push({\r\n  \&quot;event\&quot;: \&quot;select_item\&quot;,\r\n  \&quot;ecommerce\&quot;: {\r\n    \&quot;item_list_id\&quot;: \&quot;Καραμέλες\&quot;,\r\n    \&quot;item_list_name\&quot;: \&quot;Καραμέλες\&quot;,\r\n    \&quot;items\&quot;: [\r\n      {\r\n        \&quot;item_id\&quot;: \&quot;1599962\&quot;,\r\n        \&quot;item_name\&quot;: \&quot;SKITTLES Καραμέλες Fruits 38g\&quot;,\r\n        \&quot;item_brand\&quot;: \&quot;SKITTLES\&quot;,\r\n        \&quot;item_category\&quot;: \&quot;Καραμέλες\&quot;,\r\n        \&quot;price\&quot;: 0.88,\r\n        \&quot;quantity\&quot;: 1.0\r\n      }\r\n    ]\r\n  }\r\n});&quot;]]}" data-plugin-userlist="{&quot;AddProductsToUserListUrl&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserList.AddSKUsInUserList/&quot;,&quot;ManageProductToWishListUrl&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.Wishlist.AddMultipleProductsWithoutLucene/&quot;,&quot;RemoveProductsFromUserListUrl&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserList.RemoveSKUsFromUserList/&quot;,&quot;SubmitUserListUrl&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserList.AddNewToUserList/&quot;,&quot;Skus&quot;:&quot;1599962&quot;,&quot;MustRefresh&quot;:true,&quot;FromWishlistPage&quot;:false,&quot;WishlistAnalytics&quot;:true}" data-anchortarget="1599962" data-plugin-bindclientcontext="{&quot;Name&quot;:&quot;UserList&quot;,&quot;Selector&quot;:&quot;.icon-favlist, .icon-cartFav, .tooltip_message_binding&quot;}" data-instance="333">
+	<div class="product-options">
+		
+
+
+<div class="dropdown dropdown--list tooltip-trigger userlist-bind" data-role="DropdownIcon" data-plugin-opentooltip="" data-plugin-tooltipposition="" data-instance="339">
+	<span class="dropdown__trigger icon-favlist add-to-list" data-sku="1599962" data-bind="userlist-products:Context" data-userlistuniquetrigger="on">
+	</span>
+	
+<div class="tooltip_message_binding" data-bind="visible: Context() &amp;&amp; !Context().UserIsLoggedIn" data-role="UserListGuestMessage" data-plugin-userflow="{&quot;Url&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserFlow.LoginUserFlow.Index/&quot;,&quot;Analytics&quot;:true,&quot;Target&quot;:&quot;[data-role=\&quot;ModalOpener\&quot;]&quot;}" style="" data-instance="340">
+	<div class="tooltip tooltip-white">
+		<p>Για να προσθέσετε το προϊόν σε Λίστα πρέπει να συνδεθείτε.</p>
+		<div class="buttons"><button data-role="ModalOpener" class="btn btn--orange">Είσοδος</button></div>
+	</div>
+</div>
+
+<div class="dropdown__list  dropdown__list--ls dropdown__list--inproduct dropdown__list--right" data-content="">
+	<i class="dropdown__arrow dropdown__arrow--right"></i>
+	<div class="cnt">
+		<div class="list">
+	<div class="list__title">
+		Προσθήκη σε…
+	</div>
+	<div class="list__checkboxes mCustomScrollbar _mCS_41 mCS_no_scrollbar" data-plugin-vscroll="{&quot;filters&quot;:true}" style="position: relative; overflow: visible;" data-instance="341"><div id="mCSB_41" class="mCustomScrollBox mCS-light mCSB_vertical mCSB_outside" style="max-height: none;" tabindex="0"><div id="mCSB_41_container" class="mCSB_container mCS_y_hidden mCS_no_scrollbar_y" style="position:relative; top:0; left:0;" dir="ltr">
+		<div data-role="UserListListing">
+			 
+		</div>
+	</div></div><div id="mCSB_41_scrollbar_vertical" class="mCSB_scrollTools mCSB_41_scrollbar mCS-light mCSB_scrollTools_vertical" style="display: none;"><div class="mCSB_draggerContainer"><div id="mCSB_41_dragger_vertical" class="mCSB_dragger" style="position: absolute; min-height: 30px; top: 0px;"><div class="mCSB_dragger_bar" style="line-height: 30px;"></div></div><div class="mCSB_draggerRail"></div></div></div></div>
+	
+
+<div class="list__newouter tooltip-trigger userlist-bind" data-plugin-opentooltip="" data-plugin-newlist="{&quot;independent&quot;:true,&quot;name&quot;:&quot;newlist&quot;,&quot;CheckGuest&quot;:true}" data-instance="343">
+	<div class="list__new">
+		
+<div class="tooltip_message_binding" data-bind="visible: Context() &amp;&amp; !Context().UserIsLoggedIn" data-role="UserListGuestMessage" data-plugin-userflow="{&quot;Url&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserFlow.LoginUserFlow.Index/&quot;,&quot;Analytics&quot;:true,&quot;Target&quot;:&quot;[data-role=\&quot;ModalOpener\&quot;]&quot;}" data-instance="344" style="">
+	<div class="tooltip tooltip-white">
+		<p>Για να δημιουργήσετε νέα Λίστα πρέπει να συνδεθείτε.</p>
+		<div class="buttons"><button data-role="ModalOpener" class="btn btn--orange">Είσοδος</button></div>
+	</div>
+</div>
+		<div class="list__add link link--lg" data-role="NewUserListFormTrigger">
+			<i class="icon-plus"></i>
+			Νέα Λίστα
+		</div>
+		<form id="userlistform_1599962" name="userlistformnew">
+			<div class="list__content">
+				<div class="list__input">
+					<div class="input" data-role="UserTitleInput">
+						<input name="UserListName" type="text" value="" placeholder="Ονομασία Λίστας*">
+					</div>
+					<div class="errorMsg" style="display:none;" data-role="UserTitleInputValidation" data-error-msg="Η ονομασία &quot;{0}&quot; χρησιμοποιείται σε άλλη Λίστα.">
+					</div>
+				</div>
+				<div class="icons icons--border">
+					<div class="icons__inner icons__inner--scroll mCustomScrollbar _mCS_42 mCS_no_scrollbar" data-plugin-vscroll="{&quot;filters&quot;:true}" style="position: relative; overflow: visible;" data-instance="345"><div id="mCSB_42" class="mCustomScrollBox mCS-light mCSB_vertical mCSB_outside" style="max-height: none;" tabindex="0"><div id="mCSB_42_container" class="mCSB_container mCS_y_hidden mCS_no_scrollbar_y" style="position:relative; top:0; left:0;" dir="ltr">
+						
+
+
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Man" checked="">
+		<i class="icons__icon icon-Man"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Woman">
+		<i class="icons__icon icon-Woman"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Boy">
+		<i class="icons__icon icon-Boy"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Girl">
+		<i class="icons__icon icon-Girl"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Baby2">
+		<i class="icons__icon icon-Baby2"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Grandfather">
+		<i class="icons__icon icon-Grandfather"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Grandmother">
+		<i class="icons__icon icon-Grandmother"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="HandHeart">
+		<i class="icons__icon icon-HandHeart"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="pet">
+		<i class="icons__icon icon-pet"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Dog">
+		<i class="icons__icon icon-Dog"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Cat">
+		<i class="icons__icon icon-Cat"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Bird">
+		<i class="icons__icon icon-Bird"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="House">
+		<i class="icons__icon icon-House"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="House2">
+		<i class="icons__icon icon-House2"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Store">
+		<i class="icons__icon icon-Store"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Ktiria">
+		<i class="icons__icon icon-Ktiria"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Ktirio">
+		<i class="icons__icon icon-Ktirio"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Hospital">
+		<i class="icons__icon icon-Hospital"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Barakia">
+		<i class="icons__icon icon-Barakia"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Football">
+		<i class="icons__icon icon-Football"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Basketball">
+		<i class="icons__icon icon-Basketball"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Volleyball">
+		<i class="icons__icon icon-Volleyball"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Tennis">
+		<i class="icons__icon icon-Tennis"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="ChampionCup">
+		<i class="icons__icon icon-ChampionCup"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Basket2">
+		<i class="icons__icon icon-Basket2"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Dinner">
+		<i class="icons__icon icon-Dinner"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Table2">
+		<i class="icons__icon icon-Table2"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Birthdaycake">
+		<i class="icons__icon icon-Birthdaycake"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Cupcake">
+		<i class="icons__icon icon-Cupcake"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="BirthdayHat">
+		<i class="icons__icon icon-BirthdayHat"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Balloon">
+		<i class="icons__icon icon-Balloon"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Gift">
+		<i class="icons__icon icon-Gift"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Cocktail">
+		<i class="icons__icon icon-Cocktail"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Glasses">
+		<i class="icons__icon icon-Glasses"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Champagne">
+		<i class="icons__icon icon-Champagne"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Leaf">
+		<i class="icons__icon icon-Leaf"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Sun">
+		<i class="icons__icon icon-Sun"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Snowflake">
+		<i class="icons__icon icon-Snowflake"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Cloud">
+		<i class="icons__icon icon-Cloud"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Star">
+		<i class="icons__icon icon-Star"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Earth">
+		<i class="icons__icon icon-Earth"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Airplane">
+		<i class="icons__icon icon-Airplane"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Waves">
+		<i class="icons__icon icon-Waves"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Boat">
+		<i class="icons__icon icon-Boat"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Trailer">
+		<i class="icons__icon icon-Trailer"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Camp">
+		<i class="icons__icon icon-Camp"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Mountain">
+		<i class="icons__icon icon-Mountain"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Wreath">
+		<i class="icons__icon icon-Wreath"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="EasterEgg">
+		<i class="icons__icon icon-EasterEgg"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="ChristmasTree">
+		<i class="icons__icon icon-ChristmasTree"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="CarivalMask">
+		<i class="icons__icon icon-CarivalMask"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Kite">
+		<i class="icons__icon icon-Kite"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Croissant">
+		<i class="icons__icon icon-Croissant"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="fruit">
+		<i class="icons__icon icon-fruit"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Fish">
+		<i class="icons__icon icon-Fish"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="meat">
+		<i class="icons__icon icon-meat"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="milk">
+		<i class="icons__icon icon-milk"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Cup">
+		<i class="icons__icon icon-Cup"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="cheese">
+		<i class="icons__icon icon-cheese"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Eggs">
+		<i class="icons__icon icon-Eggs"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="allantika">
+		<i class="icons__icon icon-allantika"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Plate">
+		<i class="icons__icon icon-Plate"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="recipes">
+		<i class="icons__icon icon-recipes"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Fridge">
+		<i class="icons__icon icon-Fridge"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Alcohole">
+		<i class="icons__icon icon-Alcohole"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Bottle">
+		<i class="icons__icon icon-Bottle"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Seeds">
+		<i class="icons__icon icon-Seeds"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Chocolate">
+		<i class="icons__icon icon-Chocolate"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Seat">
+		<i class="icons__icon icon-Seat"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Jar">
+		<i class="icons__icon icon-Jar"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Can">
+		<i class="icons__icon icon-Can"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="oneuse">
+		<i class="icons__icon icon-oneuse"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Paper">
+		<i class="icons__icon icon-Paper"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Leapstick">
+		<i class="icons__icon icon-Leapstick"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="cleaning">
+		<i class="icons__icon icon-cleaning"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Light">
+		<i class="icons__icon icon-Light"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="circle">
+		<i class="icons__icon icon-circle"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Block">
+		<i class="icons__icon icon-Block"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Triangle">
+		<i class="icons__icon icon-Triangle"></i>
+	</div>
+	<div class="icons__item">
+		<input class="icons__input" type="radio" name="icons" data-iconclass="Diamond">
+		<i class="icons__icon icon-Diamond"></i>
+	</div>
+
+
+					</div></div><div id="mCSB_42_scrollbar_vertical" class="mCSB_scrollTools mCSB_42_scrollbar mCS-light mCSB_scrollTools_vertical" style="display: none;"><div class="mCSB_draggerContainer"><div id="mCSB_42_dragger_vertical" class="mCSB_dragger" style="position: absolute; min-height: 30px; top: 0px;"><div class="mCSB_dragger_bar" style="line-height: 30px;"></div></div><div class="mCSB_draggerRail"></div></div></div></div>
+				</div>
+				<div class="list__buttons">
+					<div class="submit submit--green" data-role="SubmitNewListButton">
+						<input type="submit" value="Δημιουργία">
+					</div>
+				</div>
+			</div>
+		</form>
+	</div>
+</div>
+
+
+
+</div>
+
+
+
+
+	</div>
+</div></div>
+
+<div class="tooltip-trigger tooltip-trigger--inline" data-plugin-tooltipposition="" data-plugin-opentooltip="" data-instance="346">
+	<div class="icon-fav icon-cartFav" data-bind="wishlist-products:Context" data-productsku="1599962" data-role="WishlistIconClickHandler" data-wishlisttrigger="on">
+		<i class="icon-fav__bg"></i>
+	</div>
+	
+<div class="tooltip_message_binding" data-bind="visible: Context() &amp;&amp; !Context().UserIsLoggedIn" data-role="UserListGuestMessage" data-plugin-userflow="{&quot;Url&quot;:&quot;/ajax/Atcom.Sites.Yoda.Components.UserFlow.LoginUserFlow.Index/&quot;,&quot;Analytics&quot;:true,&quot;Target&quot;:&quot;[data-role=\&quot;ModalOpener\&quot;]&quot;}" style="" data-instance="348">
+	<div class="tooltip tooltip-white">
+		<p> Για να προσθέσετε το προϊόν στα Αγαπημένα σας πρέπει να συνδεθείτε.</p>
+		<div class="buttons"><button data-role="ModalOpener" class="btn btn--orange">Είσοδος</button></div>
+	</div>
+</div>
+</div>
+
+
+	</div>
+
+	
+
+
+	<a href="/mpiskota-sokolates-zacharodi/tsichles-karameles-gleifitzoyria/karameles/skittles-karameles-fruits-38gr-1599962/" class="absLink"></a>
+	<div class="product_innerTop">
+		<figure class="product__figure">
+			<a href="/mpiskota-sokolates-zacharodi/tsichles-karameles-gleifitzoyria/karameles/skittles-karameles-fruits-38gr-1599962/">
+				<img src="https://s1.sklavenitis.gr/images/Product/1/files/ProductMedia/Products/1599962/1.jpg" alt="SKITTLES Καραμέλες Fruits 38g" title="SKITTLES Καραμέλες Fruits 38g">
+			</a>
+
+
+					</figure>
+		
+	
+<div class="sign-badges">
+	<div class="badge">
+				<div class="inner">
+					<span class="gift_number">2+1</span>
+					<span class="gift_text">
+						Δώρο
+					</span>
+				</div>
+	</div>
+</div>
+
+		<article style="height: 46.7812px;">
+				<h4 class="product__title">
+					<a href="/mpiskota-sokolates-zacharodi/tsichles-karameles-gleifitzoyria/karameles/skittles-karameles-fruits-38gr-1599962/">SKITTLES Καραμέλες Fruits 38g</a>
+				</h4>
+
+			
+		</article>
+		<p class="itemsEst"></p>
+	</div>
+	<div class="product_innerBtm">
+		
+
+
+		
+	<div class="product_prices">
+		
+
+
+
+<div class="priceWrp">
+
+	<div class="priceKil">
+23,16 €<span>/κιλό</span>	</div>
+	<div class="main-price ">
+		
+		<div class="price" data-price="0,88">
+			0,88 €<span>/τεμ.</span>
+		</div>
+	</div>
+</div>
+
+	</div>
+
+		
+	
+<div v-mount="" data-v-app=""><div data-resources="{&quot;MaxQuantity&quot;:&quot;Μέγιστη διαθέσιμη ποσότητα &quot;,&quot;ItemAdded&quot;:&quot;Προστέθηκε στο Καλάθι&quot;,&quot;ItemRemoved&quot;:&quot;Αφαιρέθηκε από το Καλάθι&quot;,&quot;FreeGiftLabel&quot;:&quot; Δώρο&quot;}" data-role="QuantityBox" class="gray quantWrap-lg quantWrap--product q1 quantWrap ctxQuantWrap" data-sku="1599962"><!----><!----><!----><span class="remove btn quantity-btn quantity-remove"></span><span class="quantityNumber">0 <span class="quantityNumber__text">τεμ.</span></span><div class="add btn quantity-btn icon-plus quantity-add"></div><div class="add quantity-basketIcon"><i class="icon-Basket"></i></div><div class="displayTooltip"><div class="tooltip tooltip--message "></div></div></div></div>
+
+
+	</div>
+</div>
+```
+
+
+
+
+
+
 
 

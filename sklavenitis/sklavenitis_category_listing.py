@@ -16,7 +16,7 @@ from selectolax.parser import HTMLParser
 BASE = "https://www.sklavenitis.gr"
 ROOT_CATEGORIES = [
     # "eidi-artozacharoplasteioy",
-    "freska-froyta-lachanika",
+    # "freska-froyta-lachanika",
     # "fresko-psari-thalassina",
     # "fresko-kreas",
     # "galata-rofimata-chymoi-psygeioy",
@@ -30,7 +30,7 @@ ROOT_CATEGORIES = [
     # "kava",
     # "anapsyktika-nera-chymoi",
     # "xiroi-karpoi-snak",
-    # "mpiskota-sokolates-zacharodi",
+    "mpiskota-sokolates-zacharodi",
     # "eidi-proinoy-rofimata",
     # "vrefikes-paidikes-trofes",
     # "trofima-pantopoleioy",
