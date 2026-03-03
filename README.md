@@ -5,6 +5,7 @@ Python scrapers for category listing pages on Greek supermarket e-shops. Each sc
 ## Supported stores
 
 - AB Vassilopoulos: `ab/ab_category_listing.py`
+- Bazaar: `bazaar/bazaar_category_listing.py`
 - Kritikos: `kritikos/kritikos_category_listing.py`
 - Sklavenitis: `sklavenitis/sklavenitis_category_listing.py`
 - My market: `mymarket/mymarket_category_listing.py`
@@ -13,7 +14,7 @@ Each scraper is store-specific. There is no shared framework layer in this repo 
 
 ## Repository layout
 
-- `ab/`, `kritikos/`, `sklavenitis/`, `mymarket/`: standalone scrapers and parser notes for each retailer
+- `ab/`, `bazaar/`, `kritikos/`, `sklavenitis/`, `mymarket/`: standalone scrapers and parser notes for each retailer
 - `*_cards.md`: captured HTML snippets and edge-case notes used while building the parsers
 - `requirements.txt`: Python dependencies
 
@@ -38,10 +39,22 @@ Run a scraper directly:
 
 ```bash
 python3 ab/ab_category_listing.py
+python3 bazaar/bazaar_category_listing.py
 python3 kritikos/kritikos_category_listing.py
 python3 sklavenitis/sklavenitis_category_listing.py
 python3 mymarket/mymarket_category_listing.py
 ```
+
+For Bazaar brand review, you can also dump the raw `.manufacturer_link a` values across the known Bazaar categories:
+
+```bash
+python3 bazaar/bazaar_category_listing.py --dump-brands
+```
+
+That writes `bazaar/bazaar_brand_candidates.csv` and keeps manual review lists in:
+
+- `bazaar/bazaar_brand_allowlist.txt`
+- `bazaar/bazaar_brand_denylist.txt`
 
 The scripts write CSV files to the repository root. Filenames are derived from the configured category slug or root category, depending on the retailer.
 
