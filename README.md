@@ -60,8 +60,6 @@ All scrapers write the same logical fields:
 | `original_price` | Previous price when a discount is present |
 | `original_unit_price` | Previous per-unit price when available |
 | `unit_of_measure` | Normalized unit, usually `kilos`, `liters`, or `piece` |
-| `final_set_price` | Current set price when a set/bundle price is shown |
-| `original_set_price` | Previous set price when available |
 | `discount_percent` | Parsed percentage discount |
 | `offer` | Generic promo flag |
 | `one_plus_one` | `1+1` offer flag |

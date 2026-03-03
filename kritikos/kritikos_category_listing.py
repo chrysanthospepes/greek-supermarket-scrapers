@@ -95,8 +95,6 @@ class ListingProductRow:
     original_price: Optional[float] = None
     original_unit_price: Optional[float] = None
     unit_of_measure: Optional[str] = None
-    final_set_price: Optional[float] = None
-    original_set_price: Optional[float] = None
 
     discount_percent: Optional[int] = None
     offer: bool = False
@@ -755,8 +753,6 @@ def parse_listing_card(card, root_category: str) -> Optional[ListingProductRow]:
         original_price=original_price,
         original_unit_price=original_unit_price,
         unit_of_measure=unit_of_measure,
-        final_set_price=None,
-        original_set_price=None,
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
@@ -910,7 +906,6 @@ def extract_offer_overlay_map_from_next_data(tree: HTMLParser) -> Dict[str, Dict
                 {
                     "one_plus_one": False,
                     "two_plus_one": False,
-                    "final_set_price": None,
                     "pack_tokens": [],
                 },
             )
@@ -1186,7 +1181,6 @@ def crawl_category_listing(
                     {
                         "one_plus_one": False,
                         "two_plus_one": False,
-                        "final_set_price": None,
                         "pack_tokens": [],
                     },
                 )
@@ -1212,7 +1206,6 @@ def crawl_category_listing(
                     {
                         "one_plus_one": False,
                         "two_plus_one": False,
-                        "final_set_price": None,
                         "pack_tokens": [],
                     },
                 )

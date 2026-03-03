@@ -72,8 +72,6 @@ class ListingProductRow:
     original_price: Optional[float] = None
     original_unit_price: Optional[float] = None
     unit_of_measure: Optional[str] = None
-    final_set_price: Optional[float] = None
-    original_set_price: Optional[float] = None
 
     discount_percent: Optional[int] = None
     offer: bool = False
@@ -533,8 +531,6 @@ def parse_listing_article(article, root_category: str) -> Optional[ListingProduc
         original_price=original_price,
         original_unit_price=original_unit_price,
         unit_of_measure=unit_of_measure,
-        final_set_price=None,
-        original_set_price=None,
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
@@ -755,8 +751,6 @@ def parse_api_listing_product(
         original_price=original_price,
         original_unit_price=original_unit_price,
         unit_of_measure=unit_of_measure,
-        final_set_price=None,
-        original_set_price=None,
         discount_percent=discount_percent,
         offer=offer,
         one_plus_one=one_plus_one,
