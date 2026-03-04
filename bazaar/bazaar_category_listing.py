@@ -96,7 +96,6 @@ _two_plus_one_re = re.compile(r"\b2\s*\+\s*1\b")
 _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&]page=(\d+)", re.IGNORECASE)
 _price_before_currency_re = re.compile(r"(-?[0-9][0-9\.,]*)\s*€", re.IGNORECASE)
-BRAND_ALLOWLIST_PATH = BAZAAR_DIR / "bazaar_brand_allowlist.txt"
 BRAND_DENYLIST_PATH = BAZAAR_DIR / "bazaar_brand_denylist.txt"
 BRAND_CANDIDATES_PATH = BAZAAR_DIR / "bazaar_brand_candidates.csv"
 _hidden_price_quantum = Decimal("0.01")
@@ -306,24 +305,12 @@ def parse_list_file(path: Path) -> Set[str]:
 
 
 @lru_cache(maxsize=1)
-def load_brand_allowlist() -> Set[str]:
-    return parse_list_file(BRAND_ALLOWLIST_PATH)
-
-
-@lru_cache(maxsize=1)
 def load_brand_denylist() -> Set[str]:
     return parse_list_file(BRAND_DENYLIST_PATH)
 
 
 def ensure_brand_review_files() -> None:
     defaults = {
-        BRAND_ALLOWLIST_PATH: (
-            "# One Bazaar brand per line.\n"
-            "# Lines starting with # are ignored.\n"
-            "# Example:\n"
-            "# ΒΕΖΥΡΟΓΛΟΥ\n"
-            "# FARMER\n"
-        ),
         BRAND_DENYLIST_PATH: (
             "# One Bazaar non-brand label per line.\n"
             "# Use this for commodity/product-type labels from .manufacturer_link a.\n"
@@ -339,7 +326,6 @@ def ensure_brand_review_files() -> None:
 
 
 def reset_brand_list_caches() -> None:
-    load_brand_allowlist.cache_clear()
     load_brand_denylist.cache_clear()
 
 
