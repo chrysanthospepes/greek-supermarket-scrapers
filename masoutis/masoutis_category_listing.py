@@ -1,8 +1,10 @@
 import csv
 import math
+import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, fields
 from decimal import ROUND_CEILING, Decimal
 from functools import lru_cache
@@ -35,17 +37,35 @@ ROOT_CATEGORIES = [
     "categories/index/ugieinh-diatrofh?item=564",
 ]
 MAX_PAGES_PER_CATEGORY = 500
-PAGE_SLEEP_SECONDS = 0.1
 SORT_PRODUCTS_FOR_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 1.0
 RETRYABLE_STATUS_CODES = {403, 429, 500, 502, 503, 504}
+DEFAULT_PAGE_SLEEP_SECONDS = 0.02
+DEFAULT_CATEGORY_WORKERS = 4
+CLIENT_TIMEOUT_SECONDS = 30.0
 PASSKEY = "Sc@NnSh0p"
 PAGE_SIZE = 50
 API_HEADERS_TTL_SECONDS = 20 * 60
 TOKEN = ""
 ZIP_CODE = ""
 FILL_MISSING_BRANDS_FROM_DETAIL = True
+
+try:
+    PAGE_SLEEP_SECONDS = max(
+        0.0,
+        float(os.getenv("CRAWLER_PAGE_SLEEP_SECONDS", str(DEFAULT_PAGE_SLEEP_SECONDS))),
+    )
+except ValueError:
+    PAGE_SLEEP_SECONDS = DEFAULT_PAGE_SLEEP_SECONDS
+
+try:
+    CATEGORY_WORKERS = max(
+        1,
+        int(os.getenv("CRAWLER_CATEGORY_WORKERS", str(DEFAULT_CATEGORY_WORKERS))),
+    )
+except ValueError:
+    CATEGORY_WORKERS = DEFAULT_CATEGORY_WORKERS
 
 HEADERS = {
     "User-Agent": (
@@ -58,6 +78,10 @@ HEADERS = {
     "Origin": BASE,
     "Referer": f"{BASE}/",
 }
+HTTPX_LIMITS = httpx.Limits(
+    max_connections=max(8, CATEGORY_WORKERS * 4),
+    max_keepalive_connections=max(4, CATEGORY_WORKERS * 2),
+)
 
 _spaces_re = re.compile(r"\s+")
 _non_price_chars_re = re.compile(r"[^0-9,.\-]")
@@ -67,6 +91,19 @@ _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _plain_percent_re = re.compile(r"^\s*-?\s*\d+\s*%\s*$")
 _hidden_price_quantum = Decimal("0.01")
 _hidden_price_fields = ("hidden_price", "hidden_unit_price")
+
+
+def make_http_client() -> httpx.Client:
+    client_kwargs = dict(
+        headers=HEADERS,
+        timeout=CLIENT_TIMEOUT_SECONDS,
+        follow_redirects=True,
+        limits=HTTPX_LIMITS,
+    )
+    try:
+        return httpx.Client(http2=True, **client_kwargs)
+    except ImportError:
+        return httpx.Client(**client_kwargs)
 
 
 @dataclass(frozen=True)
@@ -117,7 +154,7 @@ class ListingProductRow:
 
 class MasoutisApiClient:
     def __init__(self) -> None:
-        self.client = httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True)
+        self.client = make_http_client()
         self._api_headers: Dict[str, str] = {}
         self._api_headers_refreshed_at = 0.0
         self._detail_brand_cache: Dict[str, Optional[str]] = {}
@@ -670,23 +707,40 @@ def main() -> None:
             print("No root categories selected.")
             return
 
-        for root_category in root_categories:
-            print(
-                f"\n=== category={root_category.slug} "
-                f"(item={root_category.item}, url={category_url(root_category)}) ==="
-            )
+    def process_root_category(root_category: RootCategory) -> None:
+        print(
+            f"\n=== category={root_category.slug} "
+            f"(item={root_category.item}, url={category_url(root_category)}) ==="
+        )
 
+        with MasoutisApiClient() as category_api:
             rows = crawl_root_category(
-                api=api,
+                api=category_api,
                 root_category=root_category,
                 max_pages=MAX_PAGES_PER_CATEGORY,
             )
-            print(f"parsed from listings under {root_category.slug}: {len(rows)}")
+        print(f"parsed from listings under {root_category.slug}: {len(rows)}")
 
-            if SORT_PRODUCTS_FOR_CSV:
-                rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
+        if SORT_PRODUCTS_FOR_CSV:
+            rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
 
-            save_to_csv(rows, csv_filename_for_root_category(root_category))
+        save_to_csv(rows, csv_filename_for_root_category(root_category))
+
+    if CATEGORY_WORKERS <= 1 or len(root_categories) <= 1:
+        for root_category in root_categories:
+            process_root_category(root_category)
+    else:
+        with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(root_categories))) as executor:
+            futures = {
+                executor.submit(process_root_category, root_category): root_category.slug
+                for root_category in root_categories
+            }
+            for future in as_completed(futures):
+                root_slug = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"category={root_slug} -> failed ({exc})")
 
 
 if __name__ == "__main__":

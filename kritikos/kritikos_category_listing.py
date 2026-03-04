@@ -1,8 +1,10 @@
 import csv
 import json
+import os
 import re
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from decimal import ROUND_CEILING, Decimal
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -30,16 +32,38 @@ ROOT_CATEGORIES = [
     # "categories/biologikaleitourgika",
 ]
 MAX_PAGES_PER_CATEGORY = 500
-PAGE_SLEEP_SECONDS = 0.1
 SORT_PRODUCTS_FOR_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 1.0
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+DEFAULT_PAGE_SLEEP_SECONDS = 0.02
+DEFAULT_CATEGORY_WORKERS = 4
+CLIENT_TIMEOUT_SECONDS = 30.0
+
+try:
+    PAGE_SLEEP_SECONDS = max(
+        0.0,
+        float(os.getenv("CRAWLER_PAGE_SLEEP_SECONDS", str(DEFAULT_PAGE_SLEEP_SECONDS))),
+    )
+except ValueError:
+    PAGE_SLEEP_SECONDS = DEFAULT_PAGE_SLEEP_SECONDS
+
+try:
+    CATEGORY_WORKERS = max(
+        1,
+        int(os.getenv("CRAWLER_CATEGORY_WORKERS", str(DEFAULT_CATEGORY_WORKERS))),
+    )
+except ValueError:
+    CATEGORY_WORKERS = DEFAULT_CATEGORY_WORKERS
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "el-GR,el;q=0.9,en;q=0.8",
 }
+HTTPX_LIMITS = httpx.Limits(
+    max_connections=max(8, CATEGORY_WORKERS * 4),
+    max_keepalive_connections=max(4, CATEGORY_WORKERS * 2),
+)
 
 _spaces_re = re.compile(r"\s+")
 _non_price_chars_re = re.compile(r"[^0-9,.\-]")
@@ -82,6 +106,19 @@ _pack_token_parts_re = re.compile(
 _brand_connector_tokens = {"&", "+", "/"}
 _hidden_price_quantum = Decimal("0.01")
 _hidden_price_fields = ("hidden_price", "hidden_unit_price")
+
+
+def make_http_client() -> httpx.Client:
+    client_kwargs = dict(
+        headers=HEADERS,
+        timeout=CLIENT_TIMEOUT_SECONDS,
+        follow_redirects=True,
+        limits=HTTPX_LIMITS,
+    )
+    try:
+        return httpx.Client(http2=True, **client_kwargs)
+    except ImportError:
+        return httpx.Client(**client_kwargs)
 
 
 @dataclass
@@ -1171,7 +1208,7 @@ def crawl_category_listing(
     offer_overlay_map_by_sku: Dict[str, Dict[str, Any]] = {}
 
     page = 1
-    with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+    with make_http_client() as client:
         while page <= max_pages:
             url = build_page_url(root_listing, page)
             response = fetch_listing_page(client=client, url=url, page=page)
@@ -1299,13 +1336,13 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
 
 
 if __name__ == "__main__":
-    for category in ROOT_CATEGORIES:
+    def process_root_category(category: str) -> None:
         try:
             root_slug = to_category_slug(category)
             root_category = to_root_category(category)
         except ValueError as exc:
             print(exc)
-            continue
+            return
 
         root_listing = to_category_url(root_slug)
         print(f"\n=== category={root_slug} ({root_listing}) root_category={root_category} ===")
@@ -1321,3 +1358,20 @@ if __name__ == "__main__":
             rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
 
         save_to_csv(rows, csv_filename_for_root_category(root_category))
+
+    categories = [category for category in ROOT_CATEGORIES if category.strip()]
+    if CATEGORY_WORKERS <= 1 or len(categories) <= 1:
+        for category in categories:
+            process_root_category(category)
+    else:
+        with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(categories))) as executor:
+            futures = {
+                executor.submit(process_root_category, category): category
+                for category in categories
+            }
+            for future in as_completed(futures):
+                category = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"category={category} -> failed ({exc})")
