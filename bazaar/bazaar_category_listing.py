@@ -1,5 +1,4 @@
 import csv
-import argparse
 import builtins
 import os
 import re
@@ -18,24 +17,6 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.bazaar-online.gr"
 BAZAAR_DIR = Path(__file__).resolve().parent
-KNOWN_ROOT_CATEGORIES = [
-    "froyta-lachanika",
-    # "allantika-delicatessen",
-    # "artozacharoplasteio",
-    # "vrefika",
-    # "galaktokomika-eidi-rygeioy",
-    # "glyka-almyra-snak-zacharodi",
-    # "kava",
-    # "kathariotita-oikiaka-eidi",
-    # "kataryxi",
-    # "kreas-poylerika",
-    # "pantopoleio",
-    # "proino-kafes-rofimata",
-    # "tyria-tyrokomika",
-    # "ygeia-and-omorfia",
-    # "fytika",
-    # "pet-shop",
-]
 ROOT_CATEGORIES = [
     "froyta-lachanika",
     # "allantika-delicatessen",
@@ -97,7 +78,6 @@ _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _page_param_re = re.compile(r"[?&]page=(\d+)", re.IGNORECASE)
 _price_before_currency_re = re.compile(r"(-?[0-9][0-9\.,]*)\s*€", re.IGNORECASE)
 BRAND_DENYLIST_PATH = BAZAAR_DIR / "bazaar_brand_denylist.txt"
-BRAND_CANDIDATES_PATH = BAZAAR_DIR / "bazaar_brand_candidates.csv"
 _hidden_price_quantum = Decimal("0.01")
 _hidden_price_fields = ("hidden_price", "hidden_unit_price")
 
@@ -174,23 +154,6 @@ def serialize_row_for_csv(row: ListingProductRow) -> Dict[str, Any]:
         if value is not None:
             data[field_name] = f"{value:.2f}"
     return data
-
-
-@dataclass
-class BrandCandidateStat:
-    raw_brand: str
-    count: int = 0
-    categories: Set[str] = None
-    sample_names: List[str] = None
-    sample_urls: List[str] = None
-
-    def __post_init__(self) -> None:
-        if self.categories is None:
-            self.categories = set()
-        if self.sample_names is None:
-            self.sample_names = []
-        if self.sample_urls is None:
-            self.sample_urls = []
 
 
 def normalize_spaces(text: str) -> str:
@@ -307,22 +270,6 @@ def parse_list_file(path: Path) -> Set[str]:
 @lru_cache(maxsize=1)
 def load_brand_denylist() -> Set[str]:
     return parse_list_file(BRAND_DENYLIST_PATH)
-
-
-def ensure_brand_review_files() -> None:
-    defaults = {
-        BRAND_DENYLIST_PATH: (
-            "# One Bazaar non-brand label per line.\n"
-            "# Use this for commodity/product-type labels from .manufacturer_link a.\n"
-            "# Example:\n"
-            "# ΓΛΥΚΟΠΑΤΑΤΕΣ\n"
-            "# ΑΒΟΚΑΝΤΟ\n"
-        ),
-    }
-
-    for path, content in defaults.items():
-        if not path.exists():
-            path.write_text(content, encoding="utf-8")
 
 
 def reset_brand_list_caches() -> None:
@@ -640,155 +587,6 @@ def parse_listing_article(
     return row
 
 
-def collect_brand_candidates_from_category(
-    root_listing: str,
-    root_category: str,
-    max_pages: int = 500,
-) -> Dict[str, BrandCandidateStat]:
-    root_listing = normalize(root_listing.rstrip("/"))
-    out: Dict[str, BrandCandidateStat] = {}
-    seen_keys: Set[str] = set()
-
-    with make_http_client() as client:
-        for page in range(1, max_pages + 1):
-            url = root_listing if page == 1 else f"{root_listing}?page={page}"
-            response = fetch_listing_page(client=client, url=url, page=page)
-
-            if response.status_code == 404:
-                print(f"brand-scan page={page} -> 404, stopping pagination.")
-                break
-
-            response.raise_for_status()
-            tree = HTMLParser(response.text)
-            current_page, max_page, has_next = extract_pagination_state(tree)
-
-            if current_page is not None and current_page != page:
-                print(
-                    f"brand-scan page={page} -> server current_page={current_page}, "
-                    "stopping pagination."
-                )
-                break
-
-            articles = tree.css("#mfilter-content-container .product-thumb[data-product-id]")
-            if not articles:
-                articles = tree.css(".product-thumb[data-product-id]")
-            if not articles:
-                print(f"brand-scan page={page} -> 0 products, stopping.")
-                break
-
-            added = 0
-            for article in articles:
-                sku = parse_sku(article)
-                name = parse_name(article)
-                url_value = parse_product_url(article)
-                key = url_value or f"{sku or ''}|{name or ''}"
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-
-                raw_brand = parse_raw_brand(article)
-                if not raw_brand:
-                    continue
-
-                stat = out.setdefault(raw_brand, BrandCandidateStat(raw_brand=raw_brand))
-                stat.count += 1
-                stat.categories.add(root_category)
-                if name and name not in stat.sample_names and len(stat.sample_names) < 5:
-                    stat.sample_names.append(name)
-                if url_value and url_value not in stat.sample_urls and len(stat.sample_urls) < 5:
-                    stat.sample_urls.append(url_value)
-                added += 1
-
-            print(
-                f"brand-scan page={page} +{added} brand-rows "
-                f"unique-brands={len(out)} cards={len(articles)}"
-            )
-
-            if max_page is not None and page >= max_page:
-                print(f"brand-scan page={page} -> reached max_page={max_page}, stopping.")
-                break
-
-            if not has_next:
-                print(f"brand-scan page={page} -> no next page in pagination, stopping.")
-                break
-
-            time.sleep(PAGE_SLEEP_SECONDS)
-
-    return out
-
-
-def merge_brand_candidate_stats(
-    target: Dict[str, BrandCandidateStat],
-    source: Dict[str, BrandCandidateStat],
-) -> None:
-    for raw_brand, incoming in source.items():
-        current = target.setdefault(raw_brand, BrandCandidateStat(raw_brand=raw_brand))
-        current.count += incoming.count
-        current.categories.update(incoming.categories)
-        for name in incoming.sample_names:
-            if name not in current.sample_names and len(current.sample_names) < 5:
-                current.sample_names.append(name)
-        for url in incoming.sample_urls:
-            if url not in current.sample_urls and len(current.sample_urls) < 5:
-                current.sample_urls.append(url)
-
-
-def save_brand_candidates_csv(stats: Dict[str, BrandCandidateStat], filename: Path) -> None:
-    rows = sorted(
-        stats.values(),
-        key=lambda row: (-row.count, normalize_text_no_accents(row.raw_brand), row.raw_brand),
-    )
-    with filename.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "raw_brand",
-                "normalized_brand",
-                "count",
-                "categories",
-                "sample_names",
-                "sample_urls",
-            ],
-        )
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    "raw_brand": row.raw_brand,
-                    "normalized_brand": normalize_text_no_accents(row.raw_brand),
-                    "count": row.count,
-                    "categories": " | ".join(sorted(row.categories)),
-                    "sample_names": " | ".join(row.sample_names),
-                    "sample_urls": " | ".join(row.sample_urls),
-                }
-            )
-
-    print(f"Saved {len(rows)} brand candidates to {filename}")
-
-
-def dump_brand_candidates(categories: List[str], max_pages: int = 500) -> None:
-    ensure_brand_review_files()
-
-    all_stats: Dict[str, BrandCandidateStat] = {}
-    for category in categories:
-        try:
-            root_slug = to_category_slug(category)
-        except ValueError as exc:
-            print(exc)
-            continue
-
-        root_listing = to_category_url(root_slug)
-        print(f"\n=== brand scan category={root_slug} ({root_listing}) ===")
-        stats = collect_brand_candidates_from_category(
-            root_listing=root_listing,
-            root_category=root_slug,
-            max_pages=max_pages,
-        )
-        merge_brand_candidate_stats(all_stats, stats)
-
-    save_brand_candidates_csv(all_stats, BRAND_CANDIDATES_PATH)
-
-
 def fetch_listing_page(client: httpx.Client, url: str, page: int) -> httpx.Response:
     last_error: Optional[Exception] = None
     for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
@@ -912,76 +710,44 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
     print(f"Saved {len(rows)} rows to {filename}")
 
 
-def parse_raw_brand(article) -> Optional[str]:
-    node = article.css_first(".manufacturer_link a")
-    if not node:
-        return None
-    value = normalize_spaces(node.text(separator=" ", strip=True))
-    if not value or value == "-":
-        return None
-    return value
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dump-brands",
-        action="store_true",
-        help="Crawl categories and write raw .manufacturer_link brand candidates to CSV.",
-    )
-    parser.add_argument(
-        "--brand-categories",
-        choices=("root", "known"),
-        default="known",
-        help="Which category list to use with --dump-brands.",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = parse_args()
+    reset_brand_list_caches()
 
-    if args.dump_brands:
-        categories = ROOT_CATEGORIES if args.brand_categories == "root" else KNOWN_ROOT_CATEGORIES
-        dump_brand_candidates(categories=categories, max_pages=MAX_PAGES_PER_CATEGORY)
+    def process_root_category(category: str) -> None:
+        try:
+            root_slug = to_category_slug(category)
+        except ValueError as exc:
+            print(exc)
+            return
+
+        root_listing = to_category_url(root_slug)
+        console_print(f"category={root_slug} -> start")
+
+        rows = crawl_category_listing(
+            root_listing=root_listing,
+            root_category=root_slug,
+            max_pages=MAX_PAGES_PER_CATEGORY,
+        )
+        console_print(f"category={root_slug} -> done products={len(rows)}")
+
+        if SORT_PRODUCTS_FOR_CSV:
+            rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
+
+        save_to_csv(rows, csv_filename_for_category(root_slug))
+
+    categories = [category for category in ROOT_CATEGORIES if category.strip()]
+    if CATEGORY_WORKERS <= 1 or len(categories) <= 1:
+        for category in categories:
+            process_root_category(category)
     else:
-        reset_brand_list_caches()
-
-        def process_root_category(category: str) -> None:
-            try:
-                root_slug = to_category_slug(category)
-            except ValueError as exc:
-                print(exc)
-                return
-
-            root_listing = to_category_url(root_slug)
-            console_print(f"category={root_slug} -> start")
-
-            rows = crawl_category_listing(
-                root_listing=root_listing,
-                root_category=root_slug,
-                max_pages=MAX_PAGES_PER_CATEGORY,
-            )
-            console_print(f"category={root_slug} -> done products={len(rows)}")
-
-            if SORT_PRODUCTS_FOR_CSV:
-                rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
-
-            save_to_csv(rows, csv_filename_for_category(root_slug))
-
-        categories = [category for category in ROOT_CATEGORIES if category.strip()]
-        if CATEGORY_WORKERS <= 1 or len(categories) <= 1:
-            for category in categories:
-                process_root_category(category)
-        else:
-            with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(categories))) as executor:
-                futures = {
-                    executor.submit(process_root_category, category): category
-                    for category in categories
-                }
-                for future in as_completed(futures):
-                    category = futures[future]
-                    try:
-                        future.result()
-                    except Exception as exc:
-                        print(f"category={category} -> failed ({exc})")
+        with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(categories))) as executor:
+            futures = {
+                executor.submit(process_root_category, category): category
+                for category in categories
+            }
+            for future in as_completed(futures):
+                category = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"category={category} -> failed ({exc})")
