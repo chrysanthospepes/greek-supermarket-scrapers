@@ -9,12 +9,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, fields
 from decimal import ROUND_CEILING, Decimal
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
 BASE = "https://www.masoutis.gr"
+MASOUTIS_DIR = Path(__file__).resolve().parent
 ROOT_CATEGORIES = [
     "categories/index/manabiko?item=566",
     "categories/index/kreopwleio?item=565",
@@ -51,6 +53,7 @@ API_HEADERS_TTL_SECONDS = 20 * 60
 TOKEN = ""
 ZIP_CODE = ""
 FILL_MISSING_BRANDS_FROM_DETAIL = True
+BRAND_DENYLIST_PATH = MASOUTIS_DIR / "masoutis_brand_denylist.txt"
 
 try:
     PAGE_SLEEP_SECONDS = max(
@@ -293,6 +296,12 @@ class MasoutisApiClient:
         return data if isinstance(data, list) else []
 
     def fetch_detail_brand(self, sku: str) -> Optional[str]:
+        raw_brand = self.fetch_detail_raw_brand(sku)
+        if not raw_brand:
+            return None
+        return filter_brand(raw_brand)
+
+    def fetch_detail_raw_brand(self, sku: str) -> Optional[str]:
         sku = normalize_spaces(sku)
         if not sku:
             return None
@@ -308,7 +317,7 @@ class MasoutisApiClient:
         data = self.post_json("/api/eshop/GetOfferItemCustWithCoupons", payload)
         brand = None
         if isinstance(data, dict):
-            brand = clean_brand(data.get("BrandNameDesciption"))
+            brand = clean_raw_brand(data.get("BrandNameDesciption"))
         self._detail_brand_cache[sku] = brand
         return brand
 
@@ -333,10 +342,32 @@ def normalize_spaces(text: str) -> str:
     return _spaces_re.sub(" ", (text or "").replace("\xa0", " ")).strip()
 
 
+def parse_list_file(path: Path) -> Set[str]:
+    if not path.exists():
+        return set()
+
+    values: Set[str] = set()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = normalize_spaces(raw_line)
+        if not line or line.startswith("#"):
+            continue
+        values.add(normalize_text_no_accents(line))
+    return values
+
+
 @lru_cache(maxsize=2048)
 def normalize_text_no_accents(text: str) -> str:
     normalized = unicodedata.normalize("NFD", normalize_spaces(text).lower())
     return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+@lru_cache(maxsize=1)
+def load_brand_denylist() -> Set[str]:
+    return parse_list_file(BRAND_DENYLIST_PATH)
+
+
+def reset_brand_list_caches() -> None:
+    load_brand_denylist.cache_clear()
 
 
 @lru_cache(maxsize=2048)
@@ -406,13 +437,25 @@ def parse_unit_price_label(label: Any) -> Tuple[Optional[float], Optional[str]]:
     return parse_price_number(text), text
 
 
-def clean_brand(value: Any) -> Optional[str]:
+def clean_raw_brand(value: Any) -> Optional[str]:
     brand = normalize_spaces(str(value or ""))
     if not brand:
         return None
     if normalize_text_no_accents(brand) in {"no brand", "-"}:
         return None
     return brand
+
+
+def filter_brand(brand: Optional[str]) -> Optional[str]:
+    if not brand:
+        return None
+    if normalize_text_no_accents(brand) in load_brand_denylist():
+        return None
+    return brand
+
+
+def clean_brand(value: Any) -> Optional[str]:
+    return filter_brand(clean_raw_brand(value))
 
 
 def should_try_detail_brand(value: Any) -> bool:
@@ -693,11 +736,12 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
         writer.writeheader()
         writer.writerows(serialize_row_for_csv(row) for row in rows)
 
-    print(f"Saved {len(rows)} rows to {filename}")
+    return
 
 
 def main() -> None:
     requested_slugs = {to_category_slug(category) for category in ROOT_CATEGORIES if category.strip()}
+    reset_brand_list_caches()
 
     with MasoutisApiClient() as api:
         root_categories = parse_root_categories_from_menu(
@@ -744,7 +788,7 @@ def main() -> None:
                 try:
                     future.result()
                 except Exception as exc:
-                    print(f"category={root_slug} -> failed ({exc})")
+                    console_print(f"category={root_slug} -> failed ({exc})")
 
 
 if __name__ == "__main__":
