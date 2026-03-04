@@ -13,18 +13,26 @@ import httpx
 
 BASE = "https://www.masoutis.gr"
 ROOT_CATEGORIES = [
-    # "prosfores",
-    # "nea-proionta",
-    # "meiwsh-timhs",
-    # "proionta-masouths",
-    "manabiko",
-    # "kreopwleio",
-    # "eidh-psugeiou",
-    # "eidh-katapsukshs",
-    # "ugieinh-diatrofh",
-    # "biologika-proionta",
-    # "vegan-proionta",
-    # "proionta-xwris-gloutenh",
+    "categories/index/manabiko?item=566",
+    "categories/index/kreopwleio?item=565",
+    "categories/index/eidh-psugeiou?item=568",
+    "categories/index/eidh-katapsukshs?item=573",
+    "categories/index/kaba?item=574",
+    "categories/index/snack-kshroi-karpoi?item=579",
+    "categories/index/prwina?item=544",
+    "categories/index/artozaxaroplasteio?item=575",
+    "categories/index/zaxarwdh-mpiskota?item=571",
+    "categories/index/eidh-pantopwleiou?item=562",
+    "categories/index/zumarika-ospria?item=577",
+    "categories/index/dressing?item=563",
+    "categories/index/konserboeidh?item=578",
+    "categories/index/brefikh-frontida?item=545",
+    "categories/index/proswpikh-peripoihsh?item=570",
+    "categories/index/ugieinh-xartika?item=576",
+    "categories/index/eidh-katharismou?item=572",
+    "categories/index/eidh-oikiakhs?item=727",
+    "categories/index/katoikidia?item=567",
+    "categories/index/ugieinh-diatrofh?item=564",
 ]
 MAX_PAGES_PER_CATEGORY = 500
 PAGE_SLEEP_SECONDS = 0.1
@@ -473,11 +481,8 @@ def parse_root_categories_from_menu(
 
 def to_category_slug(category: str) -> str:
     parsed = urlparse(category)
-    if parsed.scheme and parsed.netloc:
-        path = parsed.path.strip("/")
-        slug = path.split("/")[-1]
-    else:
-        slug = category.strip("/")
+    path = parsed.path.strip("/") or category.strip("/")
+    slug = path.split("/")[-1]
 
     if not slug:
         raise ValueError(f"Invalid category '{category}'")
