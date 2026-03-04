@@ -7,6 +7,7 @@ Python scrapers for category listing pages on Greek supermarket e-shops. Each sc
 - AB Vassilopoulos: `ab/ab_category_listing.py`
 - Bazaar: `bazaar/bazaar_category_listing.py`
 - Kritikos: `kritikos/kritikos_category_listing.py`
+- Masoutis: `masoutis/masoutis_category_listing.py`
 - Sklavenitis: `sklavenitis/sklavenitis_category_listing.py`
 - My market: `mymarket/mymarket_category_listing.py`
 
@@ -14,7 +15,7 @@ Each scraper is store-specific. There is no shared framework layer in this repo 
 
 ## Repository layout
 
-- `ab/`, `bazaar/`, `kritikos/`, `sklavenitis/`, `mymarket/`: standalone scrapers and parser notes for each retailer
+- `ab/`, `bazaar/`, `kritikos/`, `masoutis/`, `sklavenitis/`, `mymarket/`: standalone scrapers and parser notes for each retailer
 - `*_cards.md`: captured HTML snippets and edge-case notes used while building the parsers
 - `requirements.txt`: Python dependencies
 
@@ -33,7 +34,13 @@ Each script is configured directly in code. The main knobs live near the top of 
 - `ROOT_CATEGORIES`: category paths to crawl
 - `MAX_PAGES_PER_CATEGORY`: pagination limit
 - `PAGE_SLEEP_SECONDS`: delay between page requests
+- `CATEGORY_WORKERS`: how many root categories to crawl in parallel
 - `SORT_PRODUCTS_FOR_CSV`: whether output is sorted before writing
+
+The crawl pacing and root-category concurrency can also be overridden with environment variables:
+
+- `CRAWLER_PAGE_SLEEP_SECONDS`
+- `CRAWLER_CATEGORY_WORKERS`
 
 Run a scraper directly:
 
@@ -41,22 +48,21 @@ Run a scraper directly:
 python3 ab/ab_category_listing.py
 python3 bazaar/bazaar_category_listing.py
 python3 kritikos/kritikos_category_listing.py
+python3 masoutis/masoutis_category_listing.py
 python3 sklavenitis/sklavenitis_category_listing.py
 python3 mymarket/mymarket_category_listing.py
 ```
 
-For Bazaar brand review, you can also dump the raw `.manufacturer_link a` values across the known Bazaar categories:
+Brand denylist files:
 
-```bash
-python3 bazaar/bazaar_category_listing.py --dump-brands
-```
-
-That writes `bazaar/bazaar_brand_candidates.csv` and keeps manual review lists in:
-
-- `bazaar/bazaar_brand_allowlist.txt`
 - `bazaar/bazaar_brand_denylist.txt`
+- `masoutis/masoutis_brand_denylist.txt`
+
+If a parsed brand matches the normalized contents of the store's denylist file, the scraper writes `brand = None` for that product.
 
 The scripts write CSV files to the repository root. Filenames are derived from the configured category slug or root category, depending on the retailer.
+
+Console output is intentionally minimal. During a run, each scraper prints only when a category starts and when it finishes, together with the number of products written for that category.
 
 ## CSV schema
 

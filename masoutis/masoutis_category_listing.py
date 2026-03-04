@@ -391,8 +391,6 @@ def detect_unit_of_measure(label: str, if_weight: bool = False) -> Optional[str]
         )
     ):
         return "piece"
-    if if_weight:
-        return "kilos"
     return None
 
 
@@ -621,7 +619,7 @@ def parse_api_listing_product(
     unit_of_measure = (
         detect_unit_of_measure(final_unit_label or "", if_weight=if_weight)
         or detect_unit_of_measure(original_unit_label or "", if_weight=if_weight)
-        or ("kilos" if if_weight else "piece")
+        or "piece"
     )
 
     if final_unit_price is None and final_price is not None:
