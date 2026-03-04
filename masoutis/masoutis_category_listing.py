@@ -1,3 +1,4 @@
+import builtins
 import csv
 import math
 import os
@@ -91,6 +92,12 @@ _discount_re = re.compile(r"(-?\s*\d+)\s*%")
 _plain_percent_re = re.compile(r"^\s*-?\s*\d+\s*%\s*$")
 _hidden_price_quantum = Decimal("0.01")
 _hidden_price_fields = ("hidden_price", "hidden_unit_price")
+
+console_print = builtins.print
+
+
+def print(*args: Any, **kwargs: Any) -> None:
+    return None
 
 
 def make_http_client() -> httpx.Client:
@@ -708,10 +715,7 @@ def main() -> None:
             return
 
     def process_root_category(root_category: RootCategory) -> None:
-        print(
-            f"\n=== category={root_category.slug} "
-            f"(item={root_category.item}, url={category_url(root_category)}) ==="
-        )
+        console_print(f"category={root_category.slug} -> start")
 
         with MasoutisApiClient() as category_api:
             rows = crawl_root_category(
@@ -719,7 +723,7 @@ def main() -> None:
                 root_category=root_category,
                 max_pages=MAX_PAGES_PER_CATEGORY,
             )
-        print(f"parsed from listings under {root_category.slug}: {len(rows)}")
+        console_print(f"category={root_category.slug} -> done products={len(rows)}")
 
         if SORT_PRODUCTS_FOR_CSV:
             rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))

@@ -1,3 +1,4 @@
+import builtins
 import csv
 import html
 import json
@@ -108,6 +109,12 @@ _price_before_currency_re = re.compile(r"([0-9][0-9\.,]*)\s*(?:€|EUR)", re.IGN
 _max_price_mismatch_ratio = 1.8
 _hidden_price_quantum = Decimal("0.01")
 _hidden_price_fields = ("hidden_price", "hidden_unit_price")
+
+console_print = builtins.print
+
+
+def print(*args: Any, **kwargs: Any) -> None:
+    return None
 
 
 def make_http_client() -> httpx.Client:
@@ -896,14 +903,14 @@ if __name__ == "__main__":
             return
 
         root_listing = to_category_url(root_slug)
-        print(f"\n=== category={root_slug} ({root_listing}) ===")
+        console_print(f"category={root_slug} -> start")
 
         rows = crawl_category_listing(
             root_listing=root_listing,
             root_category=root_slug,
             max_pages=MAX_PAGES_PER_CATEGORY,
         )
-        print(f"parsed from listings under {root_slug}: {len(rows)}")
+        console_print(f"category={root_slug} -> done products={len(rows)}")
 
         if SORT_PRODUCTS_FOR_CSV:
             rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
