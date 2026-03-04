@@ -2,6 +2,8 @@
 
 Python scrapers for category listing pages on Greek supermarket e-shops. Each script crawls one retailer, normalizes product card data, and exports a CSV with a shared schema for prices, promo flags, unit pricing, images, and category metadata.
 
+Last validated against the target supermarket sites in March 2026. These sites change frequently, so selectors, APIs, and parsing assumptions may need updates over time.
+
 ## Supported stores
 
 - AB Vassilopoulos: `ab/ab_category_listing.py`
