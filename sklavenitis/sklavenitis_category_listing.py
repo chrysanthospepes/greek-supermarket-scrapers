@@ -18,8 +18,8 @@ from selectolax.parser import HTMLParser
 
 BASE = "https://www.sklavenitis.gr"
 ROOT_CATEGORIES = [
-    "eidi-artozacharoplasteioy",
     "freska-froyta-lachanika",
+    "eidi-artozacharoplasteioy",
     "fresko-psari-thalassina",
     "fresko-kreas",
     "galata-rofimata-chymoi-psygeioy",
@@ -198,9 +198,9 @@ def normalize_text_no_accents(text: str) -> str:
 @lru_cache(maxsize=512)
 def detect_unit_of_measure(label: str) -> Optional[str]:
     low = normalize_text_no_accents(label)
-    if any(token in low for token in ("κιλου", "κιλα", "κιλο", "/kg")):
+    if any(token in low for token in ("κιλου", "κιλα", "κιλο", "κιλ", "/κιλ", "/kg", "kg")):
         return "kilos"
-    if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο", "/lt", "/l")):
+    if any(token in low for token in ("λιτρου", "λιτρα", "λιτρο", "λιτρ", "/lt", "lt", "/l")):
         return "liters"
     if any(
         token in low
@@ -297,6 +297,7 @@ def reconcile_prices(
     original_price: Optional[float],
     original_unit_price: Optional[float],
     analytics_price: Optional[float],
+    explicit_unit_of_measure: Optional[str] = None,
 ) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
     if final_price is None and analytics_price is not None:
         final_price = analytics_price
@@ -311,11 +312,17 @@ def reconcile_prices(
     ):
         higher = max(analytics_price, final_price)
         lower = min(analytics_price, final_price)
+        same_as_main_price = (
+            final_unit_price is not None
+            and abs(final_unit_price - final_price) <= 1e-9
+        )
+        has_weight_or_volume_unit_price = explicit_unit_of_measure in {"kilos", "liters"}
         if higher / lower >= _max_price_mismatch_ratio and (
-            final_unit_price is None or abs(final_unit_price - final_price) <= 1e-9
+            final_unit_price is None or same_as_main_price
         ):
             final_price = analytics_price
-            final_unit_price = analytics_price
+            if final_unit_price is None or not has_weight_or_volume_unit_price:
+                final_unit_price = analytics_price
 
     if (
         final_price is not None
@@ -698,6 +705,7 @@ def parse_listing_article(
         original_price=original_price,
         original_unit_price=original_unit_price,
         analytics_price=analytics_price,
+        explicit_unit_of_measure=unit_of_measure,
     )
 
     if discount_percent is None:
