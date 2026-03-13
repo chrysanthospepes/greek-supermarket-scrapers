@@ -18,6 +18,7 @@ Each scraper is store-specific. There is no shared framework layer in this repo 
 ## Repository layout
 
 - `ab/`, `bazaar/`, `kritikos/`, `masoutis/`, `sklavenitis/`, `mymarket/`: standalone scrapers and parser notes for each retailer
+- `run_all_scrapers.py`: convenience runner for executing all scrapers, or a selected subset, in one command
 - `*_cards.md`: captured HTML snippets and edge-case notes used while building the parsers
 - `requirements.txt`: Python dependencies
 
@@ -55,6 +56,20 @@ python3 masoutis/masoutis_category_listing.py
 python3 sklavenitis/sklavenitis_category_listing.py
 python3 mymarket/mymarket_category_listing.py
 ```
+
+Run all scrapers in one command:
+
+```bash
+python3 run_all_scrapers.py
+```
+
+Run only a subset:
+
+```bash
+python3 run_all_scrapers.py sklavenitis mymarket
+```
+
+The runner executes scrapers sequentially, uses the current Python interpreter, and exits with a non-zero status if any scraper fails. Add `--stop-on-error` to stop after the first failure.
 
 Brand denylist files:
 
