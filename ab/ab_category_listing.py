@@ -14,24 +14,26 @@ import httpx
 from selectolax.parser import HTMLParser
 
 BASE = "https://www.ab.gr"
+STORE_SLUG = "ab"
 ROOT_CATEGORIES = [
     "el/eshop/Oporopoleio/c/001",
-    # "el/eshop/Fresko-Kreas-and-Psaria/c/002",
-    # "el/eshop/Galaktokomika-Fytika-Rofimata-and-Eidi-Psygeioy/c/003",
-    # "el/eshop/Tyria-Fytika-Anapliromata-and-Allantika/c/004",
-    # "el/eshop/Katepsygmena-trofima/c/005",
-    # "el/eshop/Artos-Zacharoplasteio/c/006",
-    # "el/eshop/Etoima-Geymata/c/007",
-    # "el/eshop/Kava-anapsyktika-nera-xiroi-karpoi/c/008",
-    # "el/eshop/Proino-snacking-and-rofimata/c/009",
-    # "el/eshop/Vasika-typopoiimena-trofima/c/010",
-    # "el/eshop/Ola-gia-to-moro/c/011",
-    # "el/eshop/Eidi-prosopikis-peripoiisis/c/012",
-    # "el/eshop/Katharistika-Chartika-and-eidi-spitioy/c/013",
-    # "el/eshop/Gia-katoikidia/c/014",
+    "el/eshop/Fresko-Kreas-and-Psaria/c/002",
+    "el/eshop/Galaktokomika-Fytika-Rofimata-and-Eidi-Psygeioy/c/003",
+    "el/eshop/Tyria-Fytika-Anapliromata-and-Allantika/c/004",
+    "el/eshop/Katepsygmena-trofima/c/005",
+    "el/eshop/Artos-Zacharoplasteio/c/006",
+    "el/eshop/Etoima-Geymata/c/007",
+    "el/eshop/Kava-anapsyktika-nera-xiroi-karpoi/c/008",
+    "el/eshop/Proino-snacking-and-rofimata/c/009",
+    "el/eshop/Vasika-typopoiimena-trofima/c/010",
+    "el/eshop/Ola-gia-to-moro/c/011",
+    "el/eshop/Eidi-prosopikis-peripoiisis/c/012",
+    "el/eshop/Katharistika-Chartika-and-eidi-spitioy/c/013",
+    "el/eshop/Gia-katoikidia/c/014",
 ]
 MAX_PAGES_PER_CATEGORY = 500
 SORT_PRODUCTS_FOR_CSV = True
+COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 1.0
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -355,6 +357,10 @@ def csv_filename_for_root_category(root_category: str) -> str:
     if not safe_root:
         safe_root = "category"
     return f"{safe_root}-listing-products.csv"
+
+
+def csv_filename_for_store() -> str:
+    return f"{STORE_SLUG}_listings.csv"
 
 
 CATEGORY_SEARCH_QUERY = (
@@ -1189,13 +1195,21 @@ def save_to_csv(rows: List[ListingProductRow], filename: str) -> None:
 
 
 if __name__ == "__main__":
-    def process_root_category(category: str) -> None:
+    def prepare_rows_for_csv(rows: List[ListingProductRow]) -> List[ListingProductRow]:
+        if not SORT_PRODUCTS_FOR_CSV:
+            return rows
+
+        prepared_rows = list(rows)
+        prepared_rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
+        return prepared_rows
+
+    def process_root_category(category: str) -> Optional[Tuple[str, List[ListingProductRow]]]:
         try:
             root_slug = to_category_slug(category)
             root_category = to_root_category(category)
         except ValueError as exc:
             print(exc)
-            return
+            return None
 
         root_listing = to_category_url(root_slug)
         console_print(f"category={root_slug} -> start")
@@ -1206,25 +1220,50 @@ if __name__ == "__main__":
             max_pages=MAX_PAGES_PER_CATEGORY,
         )
         console_print(f"category={root_slug} -> done products={len(rows)}")
-
-        if SORT_PRODUCTS_FOR_CSV:
-            rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
-
-        save_to_csv(rows, csv_filename_for_root_category(root_category))
+        return root_category, rows
 
     categories = [category for category in ROOT_CATEGORIES if category.strip()]
+    combined_rows: List[ListingProductRow] = []
     if CATEGORY_WORKERS <= 1 or len(categories) <= 1:
         for category in categories:
-            process_root_category(category)
+            result = process_root_category(category)
+            if result is None:
+                continue
+
+            root_category, rows = result
+            if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+                combined_rows.extend(rows)
+            else:
+                save_to_csv(prepare_rows_for_csv(rows), csv_filename_for_root_category(root_category))
     else:
+        combined_rows_by_index: Dict[int, List[ListingProductRow]] = {}
         with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(categories))) as executor:
             futures = {
-                executor.submit(process_root_category, category): category
-                for category in categories
+                executor.submit(process_root_category, category): (index, category)
+                for index, category in enumerate(categories)
             }
             for future in as_completed(futures):
-                category = futures[future]
+                index, category = futures[future]
                 try:
-                    future.result()
+                    result = future.result()
+                    if result is None:
+                        continue
+
+                    root_category, rows = result
+                    if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+                        combined_rows_by_index[index] = rows
+                    else:
+                        save_to_csv(
+                            prepare_rows_for_csv(rows),
+                            csv_filename_for_root_category(root_category),
+                        )
                 except Exception as exc:
                     print(f"category={category} -> failed ({exc})")
+
+        if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+            combined_rows = []
+            for index in range(len(categories)):
+                combined_rows.extend(combined_rows_by_index.get(index, []))
+
+    if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+        save_to_csv(prepare_rows_for_csv(combined_rows), csv_filename_for_store())

@@ -38,6 +38,7 @@ Each script is configured directly in code. The main knobs live near the top of 
 - `PAGE_SLEEP_SECONDS`: delay between page requests
 - `CATEGORY_WORKERS`: how many root categories to crawl in parallel
 - `SORT_PRODUCTS_FOR_CSV`: whether output is sorted before writing
+- `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV`: when `True`, write one `<store>_listings.csv` file instead of one CSV per category
 
 The crawl pacing and root-category concurrency can also be overridden with environment variables:
 
@@ -62,7 +63,7 @@ Brand denylist files:
 
 If a parsed brand matches the normalized contents of the store's denylist file, the scraper writes `brand = None` for that product.
 
-The scripts write CSV files to the repository root. Filenames are derived from the configured category slug or root category, depending on the retailer.
+The scripts write CSV files to the repository root. By default, filenames are derived from the configured category slug or root category, depending on the retailer. When `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV` is `True`, each scraper writes one `<store>_listings.csv` file instead.
 
 Console output is intentionally minimal. During a run, each scraper prints only when a category starts and when it finishes, together with the number of products written for that category.
 

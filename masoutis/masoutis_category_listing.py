@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 BASE = "https://www.masoutis.gr"
+STORE_SLUG = "masoutis"
 MASOUTIS_DIR = Path(__file__).resolve().parent
 ROOT_CATEGORIES = [
     "categories/index/manabiko?item=566",
@@ -41,6 +42,7 @@ ROOT_CATEGORIES = [
 ]
 MAX_PAGES_PER_CATEGORY = 500
 SORT_PRODUCTS_FOR_CSV = True
+COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV = True
 REQUEST_RETRY_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 1.0
 RETRYABLE_STATUS_CODES = {403, 429, 500, 502, 503, 504}
@@ -585,6 +587,10 @@ def csv_filename_for_root_category(root_category: RootCategory) -> str:
     return f"{safe_slug}-listing-products.csv"
 
 
+def csv_filename_for_store() -> str:
+    return f"{STORE_SLUG}_listings.csv"
+
+
 def parse_api_listing_product(
     product: Dict[str, Any],
     root_category: str,
@@ -756,7 +762,15 @@ def main() -> None:
             print("No root categories selected.")
             return
 
-    def process_root_category(root_category: RootCategory) -> None:
+    def prepare_rows_for_csv(rows: List[ListingProductRow]) -> List[ListingProductRow]:
+        if not SORT_PRODUCTS_FOR_CSV:
+            return rows
+
+        prepared_rows = list(rows)
+        prepared_rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
+        return prepared_rows
+
+    def process_root_category(root_category: RootCategory) -> Tuple[RootCategory, List[ListingProductRow]]:
         console_print(f"category={root_category.slug} -> start")
 
         with MasoutisApiClient() as category_api:
@@ -766,27 +780,44 @@ def main() -> None:
                 max_pages=MAX_PAGES_PER_CATEGORY,
             )
         console_print(f"category={root_category.slug} -> done products={len(rows)}")
+        return root_category, rows
 
-        if SORT_PRODUCTS_FOR_CSV:
-            rows.sort(key=lambda row: ((row.url or "").lower(), row.sku or "", row.name or ""))
-
-        save_to_csv(rows, csv_filename_for_root_category(root_category))
-
+    combined_rows: List[ListingProductRow] = []
     if CATEGORY_WORKERS <= 1 or len(root_categories) <= 1:
         for root_category in root_categories:
-            process_root_category(root_category)
+            output_root_category, rows = process_root_category(root_category)
+            if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+                combined_rows.extend(rows)
+            else:
+                save_to_csv(prepare_rows_for_csv(rows), csv_filename_for_root_category(output_root_category))
     else:
+        combined_rows_by_index: Dict[int, List[ListingProductRow]] = {}
         with ThreadPoolExecutor(max_workers=min(CATEGORY_WORKERS, len(root_categories))) as executor:
             futures = {
-                executor.submit(process_root_category, root_category): root_category.slug
-                for root_category in root_categories
+                executor.submit(process_root_category, root_category): (index, root_category.slug)
+                for index, root_category in enumerate(root_categories)
             }
             for future in as_completed(futures):
-                root_slug = futures[future]
+                index, root_slug = futures[future]
                 try:
-                    future.result()
+                    output_root_category, rows = future.result()
+                    if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+                        combined_rows_by_index[index] = rows
+                    else:
+                        save_to_csv(
+                            prepare_rows_for_csv(rows),
+                            csv_filename_for_root_category(output_root_category),
+                        )
                 except Exception as exc:
                     console_print(f"category={root_slug} -> failed ({exc})")
+
+        if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+            combined_rows = []
+            for index in range(len(root_categories)):
+                combined_rows.extend(combined_rows_by_index.get(index, []))
+
+    if COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV:
+        save_to_csv(prepare_rows_for_csv(combined_rows), csv_filename_for_store())
 
 
 if __name__ == "__main__":
