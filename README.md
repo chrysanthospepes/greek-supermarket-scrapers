@@ -39,7 +39,7 @@ Each script is configured directly in code. The main knobs live near the top of 
 - `PAGE_SLEEP_SECONDS`: delay between page requests
 - `CATEGORY_WORKERS`: how many root categories to crawl in parallel
 - `SORT_PRODUCTS_FOR_CSV`: whether output is sorted before writing
-- `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV`: when `True`, write one `<store>_listings.csv` file instead of one CSV per category
+- `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV`: when `True`, write one `<store>_listings.csv` file instead of one CSV per root category. This is currently enabled in all scrapers.
 
 The crawl pacing and root-category concurrency can also be overridden with environment variables:
 
@@ -69,7 +69,7 @@ Run only a subset:
 python3 run_all_scrapers.py sklavenitis mymarket
 ```
 
-The runner executes scrapers sequentially, uses the current Python interpreter, and exits with a non-zero status if any scraper fails. Add `--stop-on-error` to stop after the first failure.
+The runner executes scrapers sequentially, uses the current Python interpreter, and exits with a non-zero status if any scraper fails. Add `--stop-on-error` to stop after the first failure. It does not override any per-scraper settings; it simply runs the selected scripts in order.
 
 Brand denylist files:
 
@@ -78,13 +78,22 @@ Brand denylist files:
 
 If a parsed brand matches the normalized contents of the store's denylist file, the scraper writes `brand = None` for that product.
 
-The scripts write CSV files to the repository root. By default, filenames are derived from the configured category slug or root category, depending on the retailer. When `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV` is `True`, each scraper writes one `<store>_listings.csv` file instead.
+The scripts write CSV files to the repository root. With the current defaults, each scraper writes a single store-level file:
+
+- `ab_listings.csv`
+- `bazaar_listings.csv`
+- `kritikos_listings.csv`
+- `masoutis_listings.csv`
+- `sklavenitis_listings.csv`
+- `mymarket_listings.csv`
+
+If you set `COMBINE_ROOT_CATEGORIES_INTO_SINGLE_CSV = False` in a scraper, it switches back to one CSV per selected root category, with filenames derived from the category slug or root category for that retailer.
 
 Console output is intentionally minimal. During a run, each scraper prints only when a category starts and when it finishes, together with the number of products written for that category.
 
 ## CSV schema
 
-All scrapers write the same logical fields:
+All scrapers currently write the same columns, in this order:
 
 | Column | Meaning |
 | --- | --- |
@@ -94,16 +103,20 @@ All scrapers write the same logical fields:
 | `brand` | Parsed brand |
 | `final_price` | Current selling price |
 | `final_unit_price` | Current per-unit price |
+| `hidden_price` | Effective item price after normalizing `1+1` and `2+1` promos; otherwise the same as `final_price` |
+| `hidden_unit_price` | Effective per-unit price after normalizing `1+1` and `2+1` promos; otherwise the same as `final_unit_price` |
 | `original_price` | Previous price when a discount is present |
 | `original_unit_price` | Previous per-unit price when available |
 | `unit_of_measure` | Normalized unit, usually `kilos`, `liters`, or `piece` |
 | `discount_percent` | Parsed percentage discount |
-| `offer` | Generic promo flag |
+| `offer` | Generic promo flag derived from badges or promo text |
 | `one_plus_one` | `1+1` offer flag |
 | `two_plus_one` | `2+1` offer flag |
-| `promo_text` | Raw promotion text when relevant |
+| `promo_text` | Raw promotion text or badge text when relevant |
 | `image_url` | Product image URL |
-| `root_category` | Normalized root category used for the crawl |
+| `root_category` | Normalized root category assigned by the scraper |
+
+`hidden_price` and `hidden_unit_price` are computed from the current selling price and written with two decimal places. They are intended for consistent sorting and comparisons across bundle offers.
 
 ## Notes
 
